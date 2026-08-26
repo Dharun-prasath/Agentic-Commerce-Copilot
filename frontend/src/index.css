@@ -1,0 +1,321 @@
+@import "tailwindcss";
+
+@theme {
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+@layer base {
+  :root {
+    /* Professional Light Theme: White, Black, Blue */
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    
+    /* Professional Blue */
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 214 32% 91%;
+    --secondary-foreground: 222 47% 11%;
+    
+    --muted: 214 32% 91%;
+    --muted-foreground: 215 16% 47%;
+    
+    --accent: 214 32% 91%;
+    --accent-foreground: 222 47% 11%;
+    
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 217 91% 60%;
+    
+    --radius: 0.5rem;
+  }
+
+  * {
+    border-color: var(--color-border);
+  }
+
+  /* Force all Tailwind transitions to be buttery smooth */
+  .transition, .transition-all, .transition-colors, .transition-opacity, .transition-transform {
+    transition-duration: 400ms !important;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1) !important;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: #f8fafc;
+    background-image: 
+      radial-gradient(at 0% 0%, hsla(217, 91%, 94%, 1) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, hsla(214, 32%, 96%, 1) 0px, transparent 50%),
+      radial-gradient(at 100% 100%, hsla(217, 91%, 94%, 1) 0px, transparent 50%),
+      radial-gradient(at 0% 100%, hsla(214, 32%, 96%, 1) 0px, transparent 50%);
+    background-attachment: fixed;
+    color: var(--color-foreground);
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #f1f5f9;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}
+
+@layer components {
+  /* ── Glassmorphism cards ─────────────────────────────────────────────────────── */
+  .glass-card {
+    background: rgba(255, 255, 255, 0.65);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    border-radius: 1rem;
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
+  }
+
+  .glass-card-hover {
+    background: rgba(255, 255, 255, 0.65);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    border-radius: 1rem;
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .glass-card-hover:hover {
+    box-shadow: 0 12px 40px 0 rgba(31, 38, 135, 0.1);
+    transform: translateY(-4px);
+    background: rgba(255, 255, 255, 0.8);
+    border-color: rgba(255, 255, 255, 1);
+  }
+
+  /* ── Text ───────────────────────────────────────────────────────── */
+  .gradient-text {
+    color: var(--color-primary);
+  }
+
+  .gradient-text-blue {
+    color: var(--color-primary);
+  }
+
+  /* ── Buttons ─────────────────────────────────────────────────────────────── */
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.5rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    background-color: var(--color-primary);
+    color: var(--color-primary-foreground);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.2);
+  }
+
+  .btn-primary:hover {
+    background-color: #2563eb;
+    box-shadow: 0 6px 8px -1px rgba(59, 130, 246, 0.3);
+  }
+
+  .btn-primary:active {
+    transform: scale(0.98);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.5rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    background-color: #f1f5f9;
+    color: #0f172a;
+    border: 1px solid #e2e8f0;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .btn-secondary:hover {
+    background-color: #e2e8f0;
+  }
+
+  .btn-secondary:active {
+    transform: scale(0.98);
+  }
+
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    font-weight: 500;
+    font-size: 0.875rem;
+    color: #475569;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .btn-ghost:hover {
+    color: #0f172a;
+    background-color: #f1f5f9;
+  }
+
+  /* ── Input ───────────────────────────────────────────────────────────────── */
+  .input-field {
+    width: 100%;
+    padding: 0.75rem 1.25rem;
+    border-radius: 9999px;
+    background-color: #ffffff;
+    border: 1px solid #cbd5e1;
+    color: #0f172a;
+    font-size: 0.875rem;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .input-field::placeholder {
+    color: #94a3b8;
+  }
+
+  .input-field:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  }
+
+  /* ── Badge ───────────────────────────────────────────────────────────────── */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.625rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .badge-primary {
+    background-color: #eff6ff;
+    color: #2563eb;
+    border: 1px solid #bfdbfe;
+  }
+
+  .badge-success {
+    background-color: #eff6ff;
+    color: #2563eb;
+    border: 1px solid #bfdbfe;
+  }
+
+  .badge-warning {
+    background-color: #f8fafc;
+    color: #0f172a;
+    border: 1px solid #e2e8f0;
+  }
+
+  /* ── Product card ────────────────────────────────────────────────────────── */
+  .product-card {
+    cursor: pointer;
+  }
+
+  .product-card-image {
+    width: 100%;
+    aspect-ratio: 4/3;
+    object-fit: cover;
+    transition: transform 0.5s;
+  }
+
+  .product-card:hover .product-card-image {
+    transform: scale(1.05);
+  }
+
+  /* ── Section ─────────────────────────────────────────────────────────────── */
+  .section-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 0.25rem;
+  }
+
+  .section-subtitle {
+    color: #64748b;
+    font-size: 0.875rem;
+    margin-bottom: 1.5rem;
+  }
+
+  /* ── Skeleton loading ────────────────────────────────────────────────────── */
+  .skeleton {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    background-color: #f1f5f9;
+    border-radius: 0.5rem;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .5; }
+  }
+
+  /* ── Divider ─────────────────────────────────────────────────────────────── */
+  .divider {
+    border-top: 1px solid #e2e8f0;
+  }
+
+  /* ── Background for hero ───────────────────────────────────────── */
+  .hero-gradient {
+    background-color: #f8fafc;
+  }
+}
