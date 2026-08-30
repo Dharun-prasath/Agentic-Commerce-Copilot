@@ -4,6 +4,7 @@ import os
 
 class Settings(BaseSettings):
     COPILOT_DATABASE_URL: str = "postgresql+asyncpg://copilot:copilot_pass@localhost:5435/copilot_db"
+    COMMERCE_DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5432/agentic_commerce"
     REDIS_URL: str = "redis://localhost:6380"
     
     DEMO_APP_BASE_URL: str = "http://localhost:8001/api/v1"

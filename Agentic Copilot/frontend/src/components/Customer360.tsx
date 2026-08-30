@@ -11,6 +11,20 @@ export const Customer360: React.FC<Customer360Props> = ({ sessionId, onClose }) 
   const [details, setDetails] = useState<any>(null);
   const [intentDetails, setIntentDetails] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+
+  const handleRetry = async () => {
+    if (!sessionId) return;
+    setRetrying(true);
+    try {
+      const headers = { 'X-API-Key': import.meta.env.VITE_DASHBOARD_API_KEY || '' };
+      await fetch(`${API_BASE_URL}/intent/${sessionId}/retry`, { method: 'POST', headers });
+    } catch (e) {
+      console.error("Failed to retry", e);
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   useEffect(() => {
     if (!sessionId) return;
@@ -124,6 +138,20 @@ export const Customer360: React.FC<Customer360Props> = ({ sessionId, onClose }) 
                         <p className="text-[11px] text-gray-500 mt-1 font-medium">
                           Agent: {intentDetails.intent_agent_status || 'NOT TRIGGERED'}
                         </p>
+                      )}
+                      {intentDetails.intent_agent_status === 'FAILED' && intentDetails.intent_agent_error && (
+                        <div className="mt-1 bg-red-50 p-2 rounded border border-red-100 flex flex-col gap-1.5 items-end">
+                          <p className="text-[11px] text-red-500 font-medium break-words overflow-hidden w-full">
+                            Error: {intentDetails.intent_agent_error}
+                          </p>
+                          <button
+                            onClick={handleRetry}
+                            disabled={retrying}
+                            className="text-[10px] bg-red-100 hover:bg-red-200 text-red-700 font-semibold py-1 px-2 rounded transition-colors disabled:opacity-50"
+                          >
+                            {retrying ? 'Retrying...' : 'Retry Agent'}
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>

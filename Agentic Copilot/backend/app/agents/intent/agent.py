@@ -6,6 +6,7 @@ from app.agents.intent.prompts import INTENT_AGENT_SYSTEM_PROMPT
 import logging
 
 from app.agents.config import get_agent_config
+from app.agents.llm_factory import get_llm
 
 logger = logging.getLogger(__name__)
 
@@ -16,27 +17,29 @@ class IntentOutput(BaseModel):
     signals: List[str] = Field(description="A list of key observations from the events")
     recommended_action: str = Field(description="What the system should do, e.g. INITIATE_SALES_CONVERSATION, DO_NOTHING")
 
+class ProductOfInterest(BaseModel):
+    product_id: str = Field(description="Internal UUID of the product")
+    product_name: str = Field(description="Name of the product")
+    category: str = Field(default="", description="Category of the product")
+    price: float = Field(default=0.0, description="Price of the product")
+
 class StructuredIntentOutput(BaseModel):
     intent_category: str = Field(description="e.g. HIGH_PURCHASE_INTENT, RESEARCHING, CASUAL_BROWSING")
     confidence: float = Field(description="Float between 0.0 and 1.0")
-    customer_interest: str = Field(default="", description="Specific description of what the customer is interested in")
-    buying_stage: str = Field(default="UNKNOWN", description="e.g. AWARENESS, CONSIDERATION, DECISION")
-    behaviour_summary: str = Field(default="", description="Summary of the customer's shopping behaviour in this session")
-    products_of_interest: List[str] = Field(default=[], description="Specific product IDs the customer showed strong interest in")
-    categories_of_interest: List[str] = Field(default=[], description="Categories the customer explored")
-    reasoning: str = Field(default="", description="Detailed reasoning for why this intent was determined based on the behavioral session summary")
-    recommended_action: str = Field(default="DO_NOTHING", description="What should be done next? e.g. CONTACT_CUSTOMER, DO_NOTHING")
-    sales_consultant_context: str = Field(default="", description="A structured string summary to be passed to a human or AI sales agent to help them jump right into the conversation.")
+    customer_interest: str = Field(description="Specific description of what the customer is interested in")
+    buying_stage: str = Field(description="e.g. AWARENESS, CONSIDERATION, DECISION")
+    behaviour_summary: str = Field(description="Summary of the customer's shopping behaviour in this session. USE PRODUCT NAMES, NOT UUIDS.")
+    products_of_interest: List[ProductOfInterest] = Field(description="Specific products the customer showed strong interest in")
+    categories_of_interest: List[str] = Field(description="Categories the customer explored")
+    reasoning: str = Field(description="Detailed reasoning for why this intent was determined based on the behavioral session summary")
+    recommended_action: str = Field(description="What should be done next? e.g. CONTACT_CUSTOMER, DO_NOTHING")
+    sales_consultant_context: str = Field(description="A structured string summary to be passed to a human or AI sales agent to help them jump right into the conversation.")
 
 class IntentAgent:
     def __init__(self):
         model_name = settings.INTENT_AGENT_MODEL or settings.LLM_MODEL
         print(f"DEBUG: IntentAgent model_name is {model_name}")
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name,
-            google_api_key=settings.GEMINI_API_KEY,
-            temperature=0.0
-        )
+        self.llm = get_llm(model_name=model_name)
         try:
             self.structured_llm = self.llm.with_structured_output(IntentOutput)
             self.structured_llm_new = self.llm.with_structured_output(StructuredIntentOutput)
@@ -56,6 +59,9 @@ Your job is to reason over this complete session and determine the true customer
 Do not blindly repeat the rule score. Differentiate between deep research and immediate purchase intent.
 Output a structured JSON response containing your reasoning and the context for a future Sales Consultant.
 
+CRITICAL INSTRUCTION:
+When writing `customer_interest`, `behaviour_summary`, `reasoning`, and `sales_consultant_context`, you MUST use the human-readable product names (e.g. "Dell XPS 15") and categories. NEVER output raw UUIDs in natural-language fields. The raw UUIDs should only be preserved in the `product_id` field of `products_of_interest`.
+
 IMPORTANT: You MUST return a valid JSON object containing ALL of the following keys:
 - intent_category
 - confidence
@@ -67,9 +73,8 @@ IMPORTANT: You MUST return a valid JSON object containing ALL of the following k
 """
             
             if config.get("temperature") is not None:
-                live_llm = ChatGoogleGenerativeAI(
-                    model=config.get("model_name", settings.INTENT_AGENT_MODEL or settings.LLM_MODEL),
-                    google_api_key=settings.GEMINI_API_KEY,
+                live_llm = get_llm(
+                    model_name=config.get("model_name", settings.INTENT_AGENT_MODEL or settings.LLM_MODEL),
                     temperature=config.get("temperature", 0.0),
                     top_p=config.get("top_p", 0.9),
                     top_k=config.get("top_k", 40),
@@ -93,9 +98,8 @@ IMPORTANT: You MUST return a valid JSON object containing ALL of the following k
             sys_prompt = config.get("system_prompt", INTENT_AGENT_SYSTEM_PROMPT)
             
             if config.get("temperature") is not None:
-                live_llm = ChatGoogleGenerativeAI(
-                    model=config.get("model_name", settings.INTENT_AGENT_MODEL or settings.LLM_MODEL),
-                    google_api_key=settings.GEMINI_API_KEY,
+                live_llm = get_llm(
+                    model_name=config.get("model_name", settings.INTENT_AGENT_MODEL or settings.LLM_MODEL),
                     temperature=config.get("temperature", 0.0),
                     top_p=config.get("top_p", 0.9),
                     top_k=config.get("top_k", 40),

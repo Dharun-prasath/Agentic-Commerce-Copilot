@@ -48,6 +48,7 @@ async def get_session_intent(session_id: str, db: AsyncSession = Depends(get_db)
         "threshold_reached": session.threshold_reached,
         "status": session.status,
         "intent_agent_status": intent_agent_status,
+        "intent_agent_error": job.error if job and job.status == "FAILED" else None,
         "intent_output": assessment.agent_output if assessment and assessment.agent_output else None,
         "history": [
             {
@@ -61,3 +62,22 @@ async def get_session_intent(session_id: str, db: AsyncSession = Depends(get_db)
             for h in history_records
         ]
     }
+
+@router.post("/{session_id}/retry")
+async def retry_intent_job(session_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(IntentAgentJob).where(IntentAgentJob.session_id == session_id).with_for_update())
+    job = result.scalar_one_or_none()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    if job.status != "FAILED":
+        raise HTTPException(status_code=400, detail="Can only retry FAILED jobs")
+        
+    job.status = "QUEUED"
+    job.attempts = 0
+    job.error = None
+    job.lease_until = None
+    
+    await db.commit()
+    return {"status": "success", "message": "Job re-queued"}

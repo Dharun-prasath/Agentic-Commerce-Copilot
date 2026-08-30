@@ -15,7 +15,10 @@ router = APIRouter(dependencies=[Depends(verify_api_key)])
 async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
     try:
         # Active Sessions
-        active_sessions_result = await db.execute(select(func.count(CustomerSession.session_id)))
+        active_sessions_result = await db.execute(
+            select(func.count(CustomerSession.session_id))
+            .where(CustomerSession.status != "TERMINATED")
+        )
         active_sessions = active_sessions_result.scalar() or 0
 
         # High Intent Detected

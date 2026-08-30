@@ -59,12 +59,6 @@ export const AgentsConfigView: React.FC = () => {
     setSaveSuccess(false);
   };
 
-  const handleCapabilityToggle = (capKey: string) => {
-    if (!activeConfig) return;
-    const currentCaps = activeConfig.capabilities || {};
-    const newValue = !currentCaps[capKey];
-    handleUpdate('capabilities', { ...currentCaps, [capKey]: newValue });
-  };
 
   const handleSave = async () => {
     if (!activeConfig) return;
@@ -170,69 +164,35 @@ export const AgentsConfigView: React.FC = () => {
 
             <div className="flex-1 overflow-y-auto p-8 space-y-10">
               
-              {/* Section: General Model Parameters */}
+              {/* Section: Model Parameters */}
               <section>
                 <h4 className="text-[14px] font-bold text-gray-900 uppercase tracking-wider mb-5 pb-2 border-b border-gray-100 flex items-center">
                   <span className="w-1.5 h-4 bg-[#3366ff] rounded mr-2"></span>
-                  Model Parameters
+                  Model
                 </h4>
-                <div className="grid grid-cols-2 gap-8">
-                  <div>
-                    <label className="block text-[13px] font-bold text-gray-700 mb-2">Language Model</label>
-                    <select 
-                      value={activeConfig.model_name}
-                      onChange={(e) => handleUpdate('model_name', e.target.value)}
-                      className="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#3366ff] focus:border-[#3366ff] block p-2.5 outline-none"
-                    >
-                      <option value="gemini-1.5-flash">Gemini 1.5 Flash (Ultra-fast)</option>
-                      <option value="gemini-1.5-pro">Gemini 1.5 Pro (High Reasoning)</option>
-                      <option value="gemini-1.5-flash-8b">Gemini 1.5 Flash-8B (Low latency)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[13px] font-bold text-gray-700 mb-2">
-                      Temperature ({activeConfig.temperature})
-                    </label>
-                    <input 
-                      type="range" 
-                      min="0" max="1" step="0.1" 
-                      value={activeConfig.temperature}
-                      onChange={(e) => handleUpdate('temperature', parseFloat(e.target.value))}
-                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#3366ff]"
-                    />
-                    <div className="flex justify-between text-[11px] text-gray-500 mt-1">
-                      <span>Precise</span>
-                      <span>Creative</span>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-[13px] font-bold text-gray-700 mb-2">Max Output Tokens</label>
-                    <input 
-                      type="number" 
-                      value={activeConfig.max_output_tokens}
-                      onChange={(e) => handleUpdate('max_output_tokens', parseInt(e.target.value))}
-                      className="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#3366ff] focus:border-[#3366ff] block p-2.5 outline-none"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[13px] font-bold text-gray-700 mb-2">Top P</label>
-                      <input 
-                        type="number" step="0.05" min="0" max="1"
-                        value={activeConfig.top_p}
-                        onChange={(e) => handleUpdate('top_p', parseFloat(e.target.value))}
-                        className="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#3366ff] focus:border-[#3366ff] block p-2.5 outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[13px] font-bold text-gray-700 mb-2">Top K</label>
-                      <input 
-                        type="number" min="1" max="100"
-                        value={activeConfig.top_k}
-                        onChange={(e) => handleUpdate('top_k', parseInt(e.target.value))}
-                        className="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#3366ff] focus:border-[#3366ff] block p-2.5 outline-none"
-                      />
-                    </div>
+                <div className="w-1/2">
+                  <label className="block text-[13px] font-bold text-gray-700 mb-2">Language Model</label>
+                  <select 
+                    value={activeConfig.model_name}
+                    onChange={(e) => handleUpdate('model_name', e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#3366ff] focus:border-[#3366ff] block p-2.5 outline-none mb-3"
+                  >
+                    {selectedAgentId === 'sales' ? (
+                      <option value="gemini-1.5-flash">Gemini Live API — Cloud / Live</option>
+                    ) : (
+                      <>
+                        <option value="gemma3:1b">Gemma 3 1B — Local</option>
+                        <option value="gemma3:4b">Gemma 3 4B — Local</option>
+                        <option value="llama3.1">Llama 3.1 — Local</option>
+                        <option value="llama3.1:8b">Llama 3.1 8B — Local</option>
+                        <option value="gemini-1.5-flash">Gemini Live API — Cloud / Live</option>
+                      </>
+                    )}
+                  </select>
+                  
+                  <div className="flex items-center text-[13px] text-gray-600 font-medium mt-2">
+                    <div className={`w-2 h-2 rounded-full mr-2 ${activeConfig.model_name.includes('gemini') ? 'bg-[#3366ff]' : 'bg-[#00d26a]'}`} />
+                    {activeConfig.model_name.includes('gemini') ? 'Cloud / Live Model' : 'Local Model'}
                   </div>
                 </div>
               </section>
@@ -246,99 +206,38 @@ export const AgentsConfigView: React.FC = () => {
                 <div className="mb-6">
                   <label className="block text-[13px] font-bold text-gray-700 mb-2">System Prompt / Persona</label>
                   <textarea 
-                    rows={6}
+                    rows={8}
                     value={activeConfig.system_prompt}
                     onChange={(e) => handleUpdate('system_prompt', e.target.value)}
-                    className="w-full bg-gray-50 border border-gray-200 text-gray-900 text-[13px] rounded-lg focus:ring-[#3366ff] focus:border-[#3366ff] block p-3 outline-none font-mono resize-y"
+                    className="w-full bg-gray-50 border border-gray-200 text-gray-900 text-[13px] rounded-lg focus:ring-[#3366ff] focus:border-[#3366ff] block p-4 outline-none font-mono resize-y leading-relaxed"
                     placeholder="Enter the base instructions and persona constraints for this agent..."
                   />
                 </div>
-                <div className="w-1/2 pr-4">
-                  <label className="block text-[13px] font-bold text-gray-700 mb-2">
-                    Context Memory Size ({activeConfig.context_memory_size} turns)
-                  </label>
-                  <input 
-                    type="range" 
-                    min="0" max="20" step="1" 
-                    value={activeConfig.context_memory_size}
-                    onChange={(e) => handleUpdate('context_memory_size', parseInt(e.target.value))}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#00d26a]"
-                  />
-                  <p className="text-[12px] text-gray-500 mt-2">Number of previous conversation turns to pass into context window.</p>
-                </div>
               </section>
 
-              {/* Section: Capabilities & Integration */}
+              {/* Section: Memory */}
               <section>
                 <h4 className="text-[14px] font-bold text-gray-900 uppercase tracking-wider mb-5 pb-2 border-b border-gray-100 flex items-center">
                   <span className="w-1.5 h-4 bg-[#ffb020] rounded mr-2"></span>
-                  Capabilities & Integration
+                  Memory
                 </h4>
-                <div className="grid grid-cols-2 gap-10">
+                <div className="flex items-center justify-between w-1/2 p-4 bg-gray-50 rounded-xl border border-gray-100">
                   <div>
-                    <label className="block text-[13px] font-bold text-gray-700 mb-4">Tool Access Controls</label>
-                    <div className="space-y-3">
-                      {[
-                        { key: 'search_products', label: 'Search Products Catalog' },
-                        { key: 'check_inventory', label: 'Check Real-time Inventory' },
-                        { key: 'modify_cart', label: 'Modify Customer Cart' },
-                        { key: 'calculate_discount', label: 'Calculate Dynamic Discounts' }
-                      ].map(tool => (
-                        <label key={tool.key} className="flex items-center cursor-pointer group">
-                          <div className="relative flex-shrink-0">
-                            <input 
-                              type="checkbox" 
-                              className="sr-only" 
-                              checked={!!(activeConfig.capabilities || {})[tool.key]}
-                              onChange={() => handleCapabilityToggle(tool.key)}
-                            />
-                            <div className={`block w-8 h-5 rounded-full transition-colors ${((activeConfig.capabilities || {})[tool.key]) ? 'bg-[#ffb020]' : 'bg-gray-200'}`}></div>
-                            <div className={`dot absolute left-1 top-1 bg-white w-3 h-3 rounded-full transition-transform ${((activeConfig.capabilities || {})[tool.key]) ? 'transform translate-x-3' : ''}`}></div>
-                          </div>
-                          <div className="ml-3 text-[13px] text-gray-700 group-hover:text-gray-900 font-medium">
-                            {tool.label}
-                          </div>
-                        </label>
-                      ))}
-                    </div>
+                    <div className="text-[14px] font-bold text-gray-900">Conversation Memory</div>
+                    <div className="text-[12px] text-gray-500 mt-1">Allow the agent to remember context from recent turns.</div>
                   </div>
-                  <div className="space-y-6">
-                    <div>
-                      <label className="block text-[13px] font-bold text-gray-700 mb-2">Fallback Behavior</label>
-                      <select 
-                        value={activeConfig.fallback_behavior}
-                        onChange={(e) => handleUpdate('fallback_behavior', e.target.value)}
-                        className="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#ffb020] focus:border-[#ffb020] block p-2.5 outline-none"
-                      >
-                        <option value="escalate_to_human">Escalate to Human Agent</option>
-                        <option value="return_default">Return Default Safe Message</option>
-                        <option value="retry_once">Retry Generation Once</option>
-                      </select>
+                  <label className="flex items-center cursor-pointer">
+                    <div className="relative">
+                      <input 
+                        type="checkbox" 
+                        className="sr-only" 
+                        checked={activeConfig.context_memory_size > 0}
+                        onChange={(e) => handleUpdate('context_memory_size', e.target.checked ? 10 : 0)}
+                      />
+                      <div className={`block w-12 h-7 rounded-full transition-colors ${activeConfig.context_memory_size > 0 ? 'bg-[#00d26a]' : 'bg-gray-300'}`}></div>
+                      <div className={`dot absolute left-1 top-1 bg-white w-5 h-5 rounded-full transition-transform shadow-sm ${activeConfig.context_memory_size > 0 ? 'transform translate-x-5' : ''}`}></div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-[13px] font-bold text-gray-700 mb-2">Output Format</label>
-                        <select 
-                          value={activeConfig.output_formatting}
-                          onChange={(e) => handleUpdate('output_formatting', e.target.value)}
-                          className="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#ffb020] focus:border-[#ffb020] block p-2.5 outline-none"
-                        >
-                          <option value="markdown">Markdown</option>
-                          <option value="json">JSON</option>
-                          <option value="plain_text">Plain Text</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[13px] font-bold text-gray-700 mb-2">Timeout (ms)</label>
-                        <input 
-                          type="number" step="100" min="500"
-                          value={activeConfig.processing_timeout_ms}
-                          onChange={(e) => handleUpdate('processing_timeout_ms', parseInt(e.target.value))}
-                          className="w-full bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-[#ffb020] focus:border-[#ffb020] block p-2.5 outline-none"
-                        />
-                      </div>
-                    </div>
-                  </div>
+                  </label>
                 </div>
               </section>
 
