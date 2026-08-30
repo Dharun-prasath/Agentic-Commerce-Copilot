@@ -1,0 +1,153 @@
+import logging
+from datetime import datetime
+import json
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy import desc
+
+from app.models.models import CustomerSession, BehaviorEvent, IntentScoreHistory
+from app.agents.intent.agent import IntentAgent
+
+logger = logging.getLogger(__name__)
+
+async def build_session_summary(session_id: str, db: AsyncSession) -> dict:
+    # Fetch session
+    result = await db.execute(select(CustomerSession).where(CustomerSession.session_id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        return {}
+
+    # Fetch events
+    events_res = await db.execute(
+        select(BehaviorEvent)
+        .where(BehaviorEvent.session_id == session_id)
+        .order_by(BehaviorEvent.created_at)
+    )
+    events = events_res.scalars().all()
+
+    # Fetch score history
+    history_res = await db.execute(
+        select(IntentScoreHistory)
+        .where(IntentScoreHistory.session_id == session_id)
+        .order_by(IntentScoreHistory.created_at)
+    )
+    history = history_res.scalars().all()
+
+    # Aggregations
+    searches = []
+    products_viewed = {}
+    wishlist = []
+    behaviour_signals = {
+        "specifications_viewed": False,
+        "features_viewed": False,
+        "reviews_viewed": False,
+        "multiple_products_viewed": False
+    }
+
+    for e in events:
+        if e.event_type == "PRODUCT_SEARCHED":
+            q = e.event_metadata.get("query")
+            if q and q not in searches:
+                searches.append(q)
+        elif e.event_type == "PRODUCT_VIEWED" and e.product_id:
+            if e.product_id not in products_viewed:
+                products_viewed[e.product_id] = {"product_id": e.product_id, "view_count": 0}
+            products_viewed[e.product_id]["view_count"] += 1
+        elif e.event_type == "WISHLIST_ADDED" and e.product_id:
+            if e.product_id not in wishlist:
+                wishlist.append(e.product_id)
+        elif e.event_type == "PRODUCT_SPECIFICATIONS_VIEWED":
+            behaviour_signals["specifications_viewed"] = True
+        elif e.event_type == "PRODUCT_FEATURES_VIEWED":
+            behaviour_signals["features_viewed"] = True
+        elif e.event_type == "PRODUCT_REVIEW_VIEWED":
+            behaviour_signals["reviews_viewed"] = True
+
+    if len(products_viewed) > 1:
+        behaviour_signals["multiple_products_viewed"] = True
+
+    duration_seconds = 0
+    if events:
+        start_time = events[0].created_at
+        end_time = events[-1].created_at
+        duration_seconds = int((end_time - start_time).total_seconds())
+
+    score_breakdown = [
+        {"signal": h.signal, "score": h.score_delta, "reason": h.reason}
+        for h in history
+    ]
+
+    return {
+        "session_id": session.session_id,
+        "customer_id": session.user_id or "unknown",
+        "session": {
+            "duration_seconds": duration_seconds
+        },
+        "intent_score": {
+            "final_score": session.current_intent_score,
+            "threshold": session.intent_threshold,
+            "threshold_reached": session.threshold_reached
+        },
+        "searches": searches,
+        "products_viewed": list(products_viewed.values()),
+        "behaviour_signals": behaviour_signals,
+        "wishlist_products": wishlist,
+        "score_breakdown": score_breakdown
+    }
+
+async def finalize_session(session_id: str, db: AsyncSession, reason: str = "Explicit Termination"):
+    """
+    Finalizes an intent session. Stops accepting scores.
+    If score >= threshold, queues the session for Intent Agent processing.
+    """
+    result = await db.execute(
+        select(CustomerSession)
+        .where(CustomerSession.session_id == session_id)
+        .with_for_update()
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.status == "TERMINATED":
+        return
+
+    session.status = "TERMINATED"
+    session.finalized_at = datetime.utcnow().isoformat() + "Z"
+    
+    # Calculate duration
+    events_res = await db.execute(
+        select(BehaviorEvent)
+        .where(BehaviorEvent.session_id == session_id)
+        .order_by(BehaviorEvent.created_at)
+    )
+    events = events_res.scalars().all()
+    duration_seconds = 0
+    if events:
+        start_time = events[0].created_at
+        end_time = events[-1].created_at
+        duration_seconds = int((end_time - start_time).total_seconds())
+
+    agent_triggered = False
+    
+    logger.info(f"Finalizing session {session_id}. Score: {session.current_intent_score}. Threshold: {session.intent_threshold}")
+    
+    if session.current_intent_score >= session.intent_threshold:
+        agent_triggered = True
+        logger.info(f"Session {session_id} crossed threshold. Queuing for Intent Agent.")
+        
+        # Build structured input
+        structured_input = await build_session_summary(session_id, db)
+        
+        # No file IO required. 
+        # Insert into queue if not exists
+        from app.models.models import IntentAgentJob
+        
+        existing_job_res = await db.execute(select(IntentAgentJob).where(IntentAgentJob.session_id == session.session_id))
+        existing_job = existing_job_res.scalar_one_or_none()
+        
+        if not existing_job:
+            new_job = IntentAgentJob(
+                session_id=session.session_id,
+                status="QUEUED"
+            )
+            db.add(new_job)
+            
+    await db.commit()
