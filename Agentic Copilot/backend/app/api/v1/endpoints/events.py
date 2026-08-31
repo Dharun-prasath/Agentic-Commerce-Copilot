@@ -96,18 +96,34 @@ class TerminateSessionPayload(BaseModel):
 @router.post("/terminate")
 async def terminate_session(
     payload: TerminateSessionPayload,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
     from app.services.intent_intelligence.session import finalize_session
+    from app.services.orchestrator.service import OrchestratorService
+    
     await finalize_session(payload.session_id, db, reason="Explicit Frontend Termination")
+    
+    # Trigger orchestrator
+    orchestrator = OrchestratorService()
+    background_tasks.add_task(orchestrator.handle_session_terminated, payload.session_id)
+    
     return {"status": "terminated"}
 
 @router.get("/terminate/{session_id}")
 @router.post("/terminate/{session_id}")
 async def terminate_session_path(
     session_id: str,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
     from app.services.intent_intelligence.session import finalize_session
+    from app.services.orchestrator.service import OrchestratorService
+    
     await finalize_session(session_id, db, reason="Explicit Frontend Termination")
+    
+    # Trigger orchestrator
+    orchestrator = OrchestratorService()
+    background_tasks.add_task(orchestrator.handle_session_terminated, session_id)
+    
     return {"status": "terminated"}

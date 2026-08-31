@@ -156,3 +156,16 @@ class AgentConfig(Base, TimestampMixin):
     fallback_behavior = Column(String, nullable=False, default="return_default")
     output_formatting = Column(String, nullable=False, default="markdown")
     processing_timeout_ms = Column(Integer, nullable=False, default=30000)
+
+class OrchestratorJob(Base, TimestampMixin):
+    __tablename__ = "orchestrator_jobs"
+    
+    id = Column(String, primary_key=True, index=True) # UUID
+    session_id = Column(String, ForeignKey("customer_sessions.session_id"), nullable=False, index=True)
+    status = Column(String, nullable=False, default="INTENT_RECEIVED")
+    mock_customer_requirement = Column(JSON, nullable=True)
+    product_recommendations = Column(JSON, nullable=True)
+    commerce_actions = Column(JSON, nullable=True)
+    error = Column(String, nullable=True)
+    
+    session = relationship("CustomerSession")

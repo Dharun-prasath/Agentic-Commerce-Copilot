@@ -63,7 +63,7 @@ async def get_dashboard_sessions(db: AsyncSession = Depends(get_db)):
     try:
         # Fetch the most recent 10 sessions
         from sqlalchemy.orm import selectinload
-        from app.models.models import IntentAgentJob
+        from app.models.models import OrchestratorJob
         
         result = await db.execute(
             select(CustomerSession)
@@ -75,7 +75,7 @@ async def get_dashboard_sessions(db: AsyncSession = Depends(get_db)):
         
         session_ids = [s.session_id for s in sessions]
         jobs_result = await db.execute(
-            select(IntentAgentJob).where(IntentAgentJob.session_id.in_(session_ids))
+            select(OrchestratorJob).where(OrchestratorJob.session_id.in_(session_ids))
         )
         jobs = {j.session_id: j for j in jobs_result.scalars().all()}
         
@@ -93,7 +93,14 @@ async def get_dashboard_sessions(db: AsyncSession = Depends(get_db)):
                     is_active = "green"
                     job = jobs.get(s.session_id)
                     if job:
-                        action_text = f"Intent Agent: {job.status}"
+                        if job.status == "INTENT_RECEIVED":
+                            action_text = "Intent Agent: COMPLETED"
+                        elif job.status == "TRIGGERING_INTENT_AGENT":
+                            action_text = "Intent Agent: PROCESSING"
+                        elif job.status == "PRODUCT_INTELLIGENCE_PROCESSING":
+                            action_text = "Product Intelligence: PROCESSING"
+                        else:
+                            action_text = f"Agent: {job.status}"
                     else:
                         action_text = "Intent Agent: QUEUED"
                 else:

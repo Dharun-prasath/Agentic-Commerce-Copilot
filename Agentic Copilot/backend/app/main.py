@@ -11,21 +11,13 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting Agentic Commerce Copilot...")
-    # Add initializations here (DB pools, etc)
-    from app.services.intent_intelligence.sweeper import start_sweeper, stop_sweeper
-    from app.services.intent_intelligence.queue_worker import start_queue_worker, stop_queue_worker
-    
     # Check/create tables
     from app.core.database import engine
     from app.models.models import Base
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        
-    start_sweeper()
-    start_queue_worker()
     yield
-    await stop_sweeper()
-    await stop_queue_worker()
+    # Shutdown
     logger.info("Shutting down Agentic Commerce Copilot...")
 
 app = FastAPI(
@@ -47,7 +39,10 @@ app.add_middleware(
 # Observability
 app.add_middleware(RequestLoggingMiddleware)
 
-from app.api.v1.endpoints import events, whatsapp, voice, telegram, dashboard, agents, system, intent
+from app.api.v1.endpoints import (
+    events, whatsapp, voice, telegram, dashboard, agents, system, intent,
+    orchestrator, product_intelligence, commerce_internal
+)
 
 @app.get("/api/v1/health")
 async def health_check():
@@ -62,3 +57,7 @@ app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["dashboar
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["agents"])
 app.include_router(system.router, prefix="/api/v1/system", tags=["system"])
 
+# Internal APIs for Multi-Agent Orchestration
+app.include_router(orchestrator.router, prefix="/api/v1/internal/orchestrator", tags=["internal-orchestrator"])
+app.include_router(product_intelligence.router, prefix="/api/v1/internal/product-intelligence", tags=["internal-pi"])
+app.include_router(commerce_internal.router, prefix="/api/v1/internal/commerce", tags=["internal-commerce"])

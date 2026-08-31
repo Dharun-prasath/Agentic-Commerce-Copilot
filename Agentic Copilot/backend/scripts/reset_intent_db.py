@@ -16,6 +16,7 @@ async def reset_db():
             "intent_score_history",
             "intent_assessments",
             "intent_agent_jobs",
+            "orchestrator_jobs",
             "behavior_events",
             "customer_sessions"
         ]

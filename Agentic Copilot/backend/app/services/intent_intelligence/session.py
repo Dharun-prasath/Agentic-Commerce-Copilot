@@ -132,7 +132,6 @@ async def build_session_summary(session_id: str, db: AsyncSession) -> dict:
 async def finalize_session(session_id: str, db: AsyncSession, reason: str = "Explicit Termination"):
     """
     Finalizes an intent session. Stops accepting scores.
-    If score >= threshold, queues the session for Intent Agent processing.
     """
     result = await db.execute(
         select(CustomerSession)
@@ -145,6 +144,9 @@ async def finalize_session(session_id: str, db: AsyncSession, reason: str = "Exp
 
     session.status = "TERMINATED"
     session.finalized_at = datetime.utcnow().isoformat() + "Z"
+    
+    if session.current_intent_score and session.current_intent_score >= session.intent_threshold:
+        session.threshold_reached = True
     
     # Calculate duration
     events_res = await db.execute(
@@ -159,29 +161,6 @@ async def finalize_session(session_id: str, db: AsyncSession, reason: str = "Exp
         end_time = events[-1].created_at
         duration_seconds = int((end_time - start_time).total_seconds())
 
-    agent_triggered = False
+    logger.info(f"Finalizing session {session_id} (Duration: {duration_seconds}s). Score: {session.current_intent_score}. Threshold: {session.intent_threshold}")
     
-    logger.info(f"Finalizing session {session_id}. Score: {session.current_intent_score}. Threshold: {session.intent_threshold}")
-    
-    if session.current_intent_score >= session.intent_threshold:
-        agent_triggered = True
-        logger.info(f"Session {session_id} crossed threshold. Queuing for Intent Agent.")
-        
-        # Build structured input
-        structured_input = await build_session_summary(session_id, db)
-        
-        # No file IO required. 
-        # Insert into queue if not exists
-        from app.models.models import IntentAgentJob
-        
-        existing_job_res = await db.execute(select(IntentAgentJob).where(IntentAgentJob.session_id == session.session_id))
-        existing_job = existing_job_res.scalar_one_or_none()
-        
-        if not existing_job:
-            new_job = IntentAgentJob(
-                session_id=session.session_id,
-                status="QUEUED"
-            )
-            db.add(new_job)
-            
     await db.commit()
