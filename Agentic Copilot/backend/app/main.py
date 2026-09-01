@@ -16,6 +16,11 @@ async def lifespan(app: FastAPI):
     from app.models.models import Base
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        
+    # Start Queue Manager
+    from app.services.orchestrator.queue_manager import QueueManager
+    QueueManager.get_instance().start()
+    
     yield
     # Shutdown
     logger.info("Shutting down Agentic Commerce Copilot...")

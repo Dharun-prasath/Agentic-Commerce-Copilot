@@ -46,15 +46,15 @@ class OrchestratorService:
                     job = OrchestratorJob(
                         id=str(uuid.uuid4()),
                         session_id=session_id,
-                        status="TRIGGERING_INTENT_AGENT"
+                        status="QUEUED"
                     )
                     db.add(job)
                 else:
-                    job.status = "TRIGGERING_INTENT_AGENT"
+                    if job.status not in ["COMPLETED", "CUSTOMER_NOT_INTERESTED", "FAILED"]:
+                        job.status = "QUEUED"
                 await db.commit()
                 
-                # Fire and forget Intent Agent
-                asyncio.create_task(self._trigger_intent_agent(session_id, job.id))
+                # Intent agent is now triggered by QueueManager, so we no longer create the task here.
             else:
                 logger.info(f"Orchestrator: Session {session_id} ended WITHOUT meeting intent threshold. Workflow completed.")
 
@@ -112,22 +112,25 @@ class OrchestratorService:
                 job = OrchestratorJob(
                     id=str(uuid.uuid4()),
                     session_id=session_id,
-                    status="INTENT_RECEIVED"
+                    status="SALES_CONSULTANT_TRIGGERED"
                 )
                 db.add(job)
             else:
-                if job.status not in ["INTENT_RECEIVED", "FAILED", "TRIGGERING_INTENT_AGENT"]:
+                if job.status not in ["INTENT_RECEIVED", "FAILED", "TRIGGERING_INTENT_AGENT", "SALES_CONSULTANT_TRIGGERED"]:
                     logger.info(f"Orchestrator Job {job.id} already processed intent. Status: {job.status}")
                     return
             
-            # 2. Stop workflow here (Sales Consultant agent is under development)
-            # The workflow will pause here until the Sales Consultant agent is ready to take over.
-            logger.info(f"Orchestrator: Intent processed for {session_id}. Workflow paused waiting for Sales Consultant Agent (in development).")
-            
-            # We already set job.status to INTENT_RECEIVED above if it was newly created,
-            # or if it existed we leave it as INTENT_RECEIVED.
-            job.status = "INTENT_RECEIVED"
+            job.status = "SALES_CONSULTANT_TRIGGERED"
             await db.commit()
+
+        # Trigger Electron call
+        logger.info(f"Orchestrator: Triggering Sales Consultant (Electron) for session {session_id}.")
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                await client.post("http://127.0.0.1:3456/simulate", json={"session_id": session_id})
+        except Exception as e:
+            logger.error(f"Orchestrator failed to trigger Electron app: {e}")
 
 
     async def _trigger_product_intelligence(self, job_id: str, session_id: str, requirement: Dict[str, Any]):
@@ -189,24 +192,24 @@ class OrchestratorService:
                     job.status = "PRODUCT_RECOMMENDATIONS_READY"
                     await db.commit()
 
-            # Send rich product cards to Telegram
+            # Send rich product cards to Telegram asynchronously
             if chat_id:
                 telegram = get_telegram_provider()
                 products = recs_dict.get("recommendations", [])
                 summary = recs_dict.get("recommendation_summary") or recs_dict.get("comparison_summary", "Here are some recommendations for you!")
                 
-                await telegram.send_recommendation_summary(chat_id, summary, products)
-                logger.info(f"Orchestrator successfully routed recommendations to Telegram for {session_id}")
+                asyncio.create_task(telegram.send_recommendation_summary(chat_id, summary, products))
+                logger.info(f"Orchestrator successfully routed recommendations to Telegram asynchronously for {session_id}")
             else:
                 logger.info(f"No Telegram chat ID found for session {session_id}. Recommendations generated but not sent.")
 
-            # Mark as COMPLETED for this phase
-            async with async_session_maker() as db:
-                res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.id == job_id))
-                job = res.scalar_one_or_none()
-                if job:
-                    job.status = "COMPLETED"
-                    await db.commit()
+            # Push event to voice queue
+            from app.integrations.voice.events import push_voice_event
+            await push_voice_event(session_id, "PRODUCT_RECOMMENDATIONS_READY", recs_dict)
+
+            # Keep the status as PRODUCT_RECOMMENDATIONS_READY
+            # Do NOT mark as COMPLETED here, because the voice call is still ongoing.
+            # handle_call_disconnected will mark it as COMPLETED when the user hangs up.
 
         except Exception as e:
             logger.error(f"Failed to handle product recommendations: {e}")
@@ -249,3 +252,93 @@ class OrchestratorService:
                 job.status = "FAILED"
                 job.error = error
                 await db.commit()
+
+    async def handle_product_recommendation_requested(self, session_id: str, requirements: Dict[str, Any]):
+        """
+        Triggered by Sales Consultant when enough info is gathered.
+        """
+        async with async_session_maker() as db:
+            res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.session_id == session_id))
+            job = res.scalar_one_or_none()
+            if not job:
+                logger.error(f"Cannot find job for session {session_id} to request PI.")
+                return
+            job.status = "PRODUCT_RECOMMENDATION_REQUESTED"
+            await db.commit()
+            job_id = job.id
+            
+        asyncio.create_task(self._trigger_product_intelligence(job_id, session_id, requirements))
+
+    async def handle_product_confirmed(self, session_id: str, product_id: str):
+        """
+        Triggered by Sales Consultant when customer explicitly confirms a product.
+        """
+        logger.info(f"Customer confirmed product {product_id} for session {session_id}. Triggering Commerce Engine.")
+        
+        async with async_session_maker() as db:
+            res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.session_id == session_id))
+            job = res.scalar_one_or_none()
+            if job:
+                job.status = "COMMERCE_PROCESSING"
+                await db.commit()
+                
+        # Wait for commerce action to complete
+        result = await self.process_commerce_action(session_id, "ADD_TO_CART", {"product_id": product_id, "quantity": 1})
+        
+        async with async_session_maker() as db:
+            res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.session_id == session_id))
+            job = res.scalar_one_or_none()
+            if job:
+                job.status = "COMMERCE_COMPLETED"
+                await db.commit()
+                
+        # Push event to voice queue so the Sales Consultant knows the result
+        from app.integrations.voice.events import push_voice_event
+        await push_voice_event(session_id, "COMMERCE_RESULT", result)
+
+    async def handle_customer_not_interested(self, session_id: str):
+        """
+        Triggered by Sales Consultant when customer rejects/ends call.
+        """
+        logger.info(f"Customer not interested. Ending workflow for session {session_id}.")
+        async with async_session_maker() as db:
+            res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.session_id == session_id))
+            job = res.scalar_one_or_none()
+            if job:
+                job.status = "CUSTOMER_NOT_INTERESTED"
+                await db.commit()
+
+    async def handle_call_disconnected(self, session_id: str):
+        """
+        Triggered when the voice websocket disconnects abruptly or normally.
+        """
+        logger.info(f"Voice call disconnected for session {session_id}. Verifying job status.")
+        async with async_session_maker() as db:
+            res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.session_id == session_id))
+            job = res.scalar_one_or_none()
+            if job and job.status not in ["COMPLETED", "CUSTOMER_NOT_INTERESTED", "FAILED"]:
+                logger.info(f"Job {job.id} was in {job.status}. Marking as COMPLETED due to call disconnect.")
+                job.status = "COMPLETED"
+                await db.commit()
+
+    async def retry_session(self, session_id: str):
+        """
+        Triggered when RETRY is clicked. Clears active status and resets to QUEUED.
+        """
+        logger.info(f"Retrying session {session_id}. Resetting job to QUEUED.")
+        async with async_session_maker() as db:
+            res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.session_id == session_id))
+            job = res.scalar_one_or_none()
+            
+            if not job:
+                job = OrchestratorJob(
+                    id=str(uuid.uuid4()),
+                    session_id=session_id,
+                    status="QUEUED"
+                )
+                db.add(job)
+            else:
+                job.status = "QUEUED"
+                job.error = None
+                
+            await db.commit()

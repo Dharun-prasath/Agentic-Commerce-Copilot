@@ -1,11 +1,15 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, desc
-from app.core.database import get_db
+from app.core.database import get_db, async_session_maker
 from app.core.security import verify_api_key
 from app.models.models import CustomerSession, IntentAssessment, Conversation, CommerceAction
 import logging
+import json
+import asyncio
+from app.services.observability.graph_builder import build_execution_graph
 
 logger = logging.getLogger(__name__)
 
@@ -191,3 +195,157 @@ async def get_session_details(session_id: str, db: AsyncSession = Depends(get_db
     except Exception as e:
         logger.error(f"Error fetching session details: {e}")
         return {"error": str(e)}
+
+@router.get("/calls")
+async def get_dashboard_calls(db: AsyncSession = Depends(get_db)):
+    try:
+        from sqlalchemy.orm import selectinload
+        from app.models.models import OrchestratorJob, CustomerSession
+        
+        result = await db.execute(
+            select(OrchestratorJob)
+            .options(selectinload(OrchestratorJob.session).selectinload(CustomerSession.customer))
+            .order_by(desc(OrchestratorJob.created_at))
+            .limit(50)
+        )
+        jobs = result.scalars().all()
+        
+        output = []
+        for job in jobs:
+            s = job.session
+            if not s:
+                continue
+                
+            user_name = "Anonymous"
+            if s.customer and s.customer.name:
+                user_name = s.customer.name
+            elif s.user_id:
+                user_name = s.user_id
+                
+            time_str = job.created_at.strftime("%Y-%m-%d %H:%M") if job.created_at else "Unknown"
+            
+            output.append({
+                "id": job.id,
+                "session_id": job.session_id,
+                "user": user_name,
+                "status": job.status,
+                "time": time_str,
+                "error": job.error
+            })
+            
+        return output
+    except Exception as e:
+        logger.error(f"Error fetching calls: {e}")
+        return []
+
+@router.get("/queue")
+async def get_dashboard_queue(db: AsyncSession = Depends(get_db)):
+    try:
+        from app.models.models import OrchestratorJob
+        
+        # High intent sessions that are either processing or waiting
+        result = await db.execute(
+            select(CustomerSession)
+            .where(CustomerSession.threshold_reached == True)
+            .order_by(desc(CustomerSession.created_at))
+            .limit(20)
+        )
+        sessions = result.scalars().all()
+        
+        output = []
+        for i, s in enumerate(sessions):
+            job_res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.session_id == s.session_id))
+            job = job_res.scalar_one_or_none()
+            
+            queue_status = "WAITING"
+            if job:
+                if job.status == "COMPLETED" or job.status == "CUSTOMER_NOT_INTERESTED":
+                    queue_status = "COMPLETED"
+                elif "FAILED" in job.status:
+                    queue_status = "FAILED"
+                else:
+                    queue_status = "RUNNING"
+            elif s.status == "TERMINATED":
+                queue_status = "TERMINATED"
+                
+            time_str = s.created_at.strftime("%H:%M:%S") if s.created_at else "Unknown"
+            
+            output.append({
+                "position": i + 1,
+                "session_id": s.session_id,
+                "status": queue_status,
+                "intent_score": s.current_intent_score,
+                "time": time_str
+            })
+            
+        return output
+    except Exception as e:
+        logger.error(f"Error fetching queue: {e}")
+        return []
+
+from app.services.orchestrator.queue_manager import QueueManager
+from pydantic import BaseModel
+
+class DelayConfig(BaseModel):
+    delay_seconds: int
+
+@router.get("/queue/config")
+async def get_queue_config():
+    return QueueManager.get_instance().get_status()
+
+@router.post("/queue/config")
+async def set_queue_config(config: DelayConfig):
+    QueueManager.get_instance().set_delay(config.delay_seconds)
+    return {"status": "success", "delay": config.delay_seconds}
+
+@router.post("/queue/pause")
+async def pause_queue():
+    QueueManager.get_instance().pause()
+    return {"status": "paused"}
+
+@router.post("/queue/resume")
+async def resume_queue():
+    QueueManager.get_instance().resume()
+    return {"status": "resumed"}
+
+@router.post("/queue/next")
+async def start_next_in_queue():
+    QueueManager.get_instance().skip_delay()
+    return {"status": "skipped_delay"}
+
+@router.post("/execution/{session_id}/retry")
+async def retry_session_execution(session_id: str):
+    from app.services.orchestrator.service import OrchestratorService
+    await OrchestratorService().retry_session(session_id)
+    # Also skip delay if queue is empty or this is the current next
+    QueueManager.get_instance().skip_delay()
+    return {"status": "retrying"}
+
+@router.get("/execution/{session_id}")
+async def get_execution_graph(session_id: str, db: AsyncSession = Depends(get_db)):
+    try:
+        graph = await build_execution_graph(session_id, db)
+        return graph
+    except Exception as e:
+        logger.error(f"Error fetching graph: {e}")
+        return {"nodes": [], "edges": []}
+
+@router.get("/execution/{session_id}/stream")
+async def stream_execution_graph(session_id: str):
+    async def event_generator():
+        last_state = ""
+        while True:
+            try:
+                async with async_session_maker() as db:
+                    graph = await build_execution_graph(session_id, db)
+                    graph_str = json.dumps(graph)
+                    if graph_str != last_state:
+                        last_state = graph_str
+                        yield f"data: {graph_str}\n\n"
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"SSE Error: {e}")
+            await asyncio.sleep(1)
+            
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

@@ -18,6 +18,10 @@ from app.agents.product_intelligence.agent import search_products, get_product_d
 from app.agents.commerce.agent import get_cart_status, add_product_to_cart
 import json
 
+from app.agents.sales_consultant.agent import SalesConsultantAgent
+from app.integrations.voice.events import get_voice_queue, cleanup_voice_queue
+from app.services.orchestrator.service import OrchestratorService
+
 class VoiceProvider(ABC):
     @abstractmethod
     async def handle_session(self, websocket: WebSocket, session_id: str = ""):
@@ -37,69 +41,26 @@ class GeminiNativeAudioProvider(VoiceProvider):
                 async for db in get_db():
                     result = await db.execute(
                         select(CustomerSession)
-                        .options(selectinload(CustomerSession.customer))
-                        .where(CustomerSession.id == session_id)
+                        .options(selectinload(CustomerSession.customer), selectinload(CustomerSession.intents))
+                        .where(CustomerSession.session_id == session_id)
                     )
                     db_session = result.scalar_one_or_none()
                     if db_session:
                         context_str = f"User session ID is {session_id}."
                         if db_session.customer:
                             context_str += f" Customer name is {db_session.customer.name}, phone: {db_session.customer.phone}."
+                        if db_session.intents:
+                            latest_intent = db_session.intents[-1]
+                            context_str += f"\nIntent Category: {latest_intent.intent_category}"
+                            if latest_intent.recommended_action:
+                                context_str += f"\nRecommended Action: {latest_intent.recommended_action}"
+                            if latest_intent.signals:
+                                context_str += f"\nSignals: {latest_intent.signals}"
                     break
 
-            base_instruction = "You are a helpful AI Voice Assistant for Razorpay Agentic Commerce. You are taking a phone call with a user. Keep your responses extremely concise. 1-2 short sentences max. Talk naturally like a real human on the phone. Start by greeting the user!"
-            
-            system_instruction_text = base_instruction
-            if context_str:
-                system_instruction_text += f"\n\nContext:\n{context_str}"
-
-            tool_declarations = types.Tool(
-                function_declarations=[
-                    types.FunctionDeclaration(
-                        name="search_products",
-                        description="Search for products in the catalog",
-                        parameters={
-                            "type": "OBJECT",
-                            "properties": {
-                                "query": {"type": "STRING", "description": "Search query"},
-                                "category": {"type": "STRING", "description": "Optional category"}
-                            },
-                            "required": ["query"]
-                        }
-                    ),
-                    types.FunctionDeclaration(
-                        name="get_product_details",
-                        description="Get details for a specific product ID",
-                        parameters={
-                            "type": "OBJECT",
-                            "properties": {
-                                "product_id": {"type": "STRING", "description": "Product ID"}
-                            },
-                            "required": ["product_id"]
-                        }
-                    ),
-                    types.FunctionDeclaration(
-                        name="get_cart_status",
-                        description="Get the status of the user's cart",
-                        parameters={
-                            "type": "OBJECT",
-                            "properties": {}
-                        }
-                    ),
-                    types.FunctionDeclaration(
-                        name="add_product_to_cart",
-                        description="Add a product to the cart",
-                        parameters={
-                            "type": "OBJECT",
-                            "properties": {
-                                "product_id": {"type": "STRING"},
-                                "quantity": {"type": "INTEGER"}
-                            },
-                            "required": ["product_id", "quantity"]
-                        }
-                    )
-                ]
-            )
+            sales_agent = SalesConsultantAgent()
+            system_instruction_text = sales_agent.get_system_instruction(context_str)
+            tool_declarations = sales_agent.get_tool_declarations()
 
             config = types.LiveConnectConfig(
                 response_modalities=[types.Modality.AUDIO],
@@ -114,54 +75,100 @@ class GeminiNativeAudioProvider(VoiceProvider):
                 )
             )
             
+            # Setup Event Queue for pushing external Orchestrator events to Gemini
+            voice_queue = get_voice_queue(session_id)
+            
             async with self.client.aio.live.connect(model=self.model, config=config) as session:
                 logger.info("Connected to Gemini Live API")
                 
-                # Trigger the AI to speak first by sending a small audio clip of someone saying "hello"
-                import os
-                hello_path = os.path.join(os.path.dirname(__file__), "hello.pcm")
-                if os.path.exists(hello_path):
-                    with open(hello_path, "rb") as f:
-                        audio_data = f.read()
-                    await session.send_realtime_input(
-                        audio={"mime_type": "audio/pcm;rate=16000", "data": audio_data}
-                    )
-                    logger.info("Sent initial audio greeting trigger to Gemini")
+                # Prompt the AI to speak first using a system instruction, rather than sending dummy audio.
+                import time
+                last_spoken_time = time.time()
+                
+                await session.send(
+                    input="SYSTEM: The call has just connected. Speak first and greet the customer naturally based on their intent.", 
+                    end_of_turn=True
+                )
+                
+                SILENCE_THRESHOLD = getattr(settings, 'VOICE_SILENCE_RMS', 200)
+                SILENCE_TIMEOUT_1 = getattr(settings, 'VOICE_SILENCE_TIMEOUT_1', 15.0)
+                SILENCE_TIMEOUT_2 = getattr(settings, 'VOICE_SILENCE_TIMEOUT_2', 30.0)
+                
+                def get_rms(pcm_data: bytes) -> float:
+                    count = len(pcm_data) // 2
+                    if count == 0: return 0.0
+                    try:
+                        shorts = struct.unpack(f"<{count}h", pcm_data)
+                        return math.sqrt(sum(s*s for s in shorts) / count)
+                    except:
+                        return 0.0
                 
                 async def send_to_gemini():
+                    nonlocal last_spoken_time
                     try:
+                        chunk_count = 0
                         while True:
-                            # Receive raw PCM bytes from the client
                             data = await websocket.receive_bytes()
                             if not data:
                                 break
                             
-                            # Log every ~5th chunk to avoid spamming the console
-                            if getattr(self, '_chunk_counter', 0) % 5 == 0:
-                                logger.info(f"Received audio from user: {len(data)} bytes, sending to Gemini...")
-                            self._chunk_counter = getattr(self, '_chunk_counter', 0) + 1
+                            chunk_count += 1
+                            if chunk_count % 100 == 0:
+                                logger.info(f"Received {chunk_count} chunks from client, last rms={get_rms(data):.2f}")
                             
-                            # Send to Gemini
+                            if chunk_count % 5 == 0:
+                                rms = get_rms(data)
+                                if rms > SILENCE_THRESHOLD:
+                                    last_spoken_time = time.time()
+                            
                             await session.send_realtime_input(
-                                audio={"mime_type": "audio/pcm;rate=16000", "data": data}
+                                media=types.Blob(data=data, mime_type="audio/pcm;rate=16000")
                             )
                     except WebSocketDisconnect:
                         logger.info("Client WebSocket disconnected.")
                     except Exception as e:
                         logger.error(f"Error in send_to_gemini: {e}")
+                        
+                async def check_silence():
+                    nonlocal last_spoken_time
+                    prompt_1_sent = False
+                    try:
+                        while True:
+                            await asyncio.sleep(1.0)
+                            idle = time.time() - last_spoken_time
+                            if idle > SILENCE_TIMEOUT_1 and not prompt_1_sent:
+                                logger.info(f"User silent for {SILENCE_TIMEOUT_1}s. Sending check prompt.")
+                                await session.send(
+                                    input="SYSTEM: The user has been silent for 15 seconds. Please ask 'Are you still there?'",
+                                    end_of_turn=True
+                                )
+                                prompt_1_sent = True
+                            elif idle > SILENCE_TIMEOUT_2:
+                                logger.info(f"User silent for {SILENCE_TIMEOUT_2}s. Terminating.")
+                                await session.send(
+                                    input="SYSTEM: The user has been silent for over 30 seconds. Please say a polite goodbye and use the end_conversation tool immediately.",
+                                    end_of_turn=True
+                                )
+                                break
+                            elif idle < SILENCE_TIMEOUT_1:
+                                prompt_1_sent = False
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as e:
+                        logger.error(f"Error in check_silence: {e}")
 
                 async def receive_from_gemini():
+                    orchestrator = OrchestratorService()
                     while True:
                         try:
                             async for response in session.receive():
                                 if response.server_content and response.server_content.model_turn and response.server_content.model_turn.parts:
                                     for part in response.server_content.model_turn.parts:
                                         if part.inline_data and part.inline_data.data is not None:
-                                            # Avoid logging every chunk to reduce spam, log occasionally
-                                            if getattr(session, '_recv_chunk_counter', 0) % 20 == 0:
-                                                logger.info(f"Received audio chunk from Gemini: {len(part.inline_data.data)} bytes")
-                                            session._recv_chunk_counter = getattr(session, '_recv_chunk_counter', 0) + 1
+                                            # logger.info(f"Received {len(part.inline_data.data)} bytes audio from Gemini")
                                             await websocket.send_bytes(part.inline_data.data)
+                                        elif part.text:
+                                            logger.info(f"Gemini text: {part.text}")
                                 
                                 if response.tool_call:
                                     function_responses = []
@@ -169,25 +176,28 @@ class GeminiNativeAudioProvider(VoiceProvider):
                                         logger.info(f"Gemini requested tool: {call.name}")
                                         args = call.args or {}
                                         try:
-                                            if call.name == "search_products":
-                                                result = await search_products.ainvoke(args)
-                                            elif call.name == "get_product_details":
-                                                result = await get_product_details.ainvoke(args)
-                                            elif call.name == "get_cart_status":
-                                                args["session_id"] = session_id
-                                                result = await get_cart_status.ainvoke(args)
-                                            elif call.name == "add_product_to_cart":
-                                                args["session_id"] = session_id
-                                                result = await add_product_to_cart.ainvoke(args)
-                                            else:
-                                                result = "Unknown tool"
+                                            if call.name == "request_product_recommendations":
+                                                # Dispatch asynchronously to orchestrator
+                                                asyncio.create_task(orchestrator.handle_product_recommendation_requested(session_id, args))
+                                                result_text = "I've asked our systems to find the best options. Waiting for results..."
                                                 
-                                            # Return dict wrapped in result
+                                            elif call.name == "confirm_product_selection":
+                                                asyncio.create_task(orchestrator.handle_product_confirmed(session_id, args.get("product_id")))
+                                                result_text = "Product successfully selected."
+                                                
+                                            elif call.name == "end_conversation":
+                                                asyncio.create_task(orchestrator.handle_customer_not_interested(session_id))
+                                                result_text = "Conversation ended."
+                                                
+                                            else:
+                                                result_text = "Unknown tool"
+                                                
+                                            # Return dummy success immediately to not block voice
                                             function_responses.append(
                                                 types.FunctionResponse(
                                                     name=call.name,
                                                     id=call.id,
-                                                    response={"result": result}
+                                                    response={"status": "dispatched", "message": result_text}
                                                 )
                                             )
                                         except Exception as e:
@@ -208,13 +218,59 @@ class GeminiNativeAudioProvider(VoiceProvider):
                                 logger.info("Gemini Live API connection closed normally.")
                                 break
                             logger.error(f"Error in receive_from_gemini: {e}")
-                            await asyncio.sleep(0.1) # Prevents tight loops on persistent errors
+                            await asyncio.sleep(0.1)
+                            
+                async def listen_for_orchestrator_events():
+                    try:
+                        while True:
+                            event = await voice_queue.get()
+                            event_type = event.get("event_type")
+                            data = event.get("data")
+                            logger.info(f"Voice Session received internal event: {event_type}")
+                            
+                            if event_type == "PRODUCT_RECOMMENDATIONS_READY":
+                                # Push to Gemini as a system text update
+                                message = f"SYSTEM UPDATE: The product intelligence system has returned the following options for the user. Explain them naturally based on their needs:\n\n{json.dumps(data, indent=2)}"
+                                await session.send(
+                                    input=message,
+                                    end_of_turn=True
+                                )
+                                
+                            elif event_type == "COMMERCE_RESULT":
+                                message = f"SYSTEM UPDATE: The commerce action returned: {json.dumps(data)}. If successful, confirm to the user and naturally close the conversation."
+                                await session.send(
+                                    input=message,
+                                    end_of_turn=True
+                                )
+                                
+                    except asyncio.CancelledError:
+                        logger.info("listen_for_orchestrator_events task cancelled.")
+                    except Exception as e:
+                        logger.error(f"Error in listen_for_orchestrator_events: {e}")
 
-                # Run both tasks concurrently
-                await asyncio.gather(send_to_gemini(), receive_from_gemini())
+                # Run tasks concurrently. If one finishes (like send_to_gemini on disconnect), cancel the rest.
+                tasks = [
+                    asyncio.create_task(send_to_gemini()),
+                    asyncio.create_task(receive_from_gemini()),
+                    asyncio.create_task(listen_for_orchestrator_events())
+                ]
+                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                for p in pending:
+                    p.cancel()
 
         except Exception as e:
             logger.error(f"Failed to handle Gemini Live session: {e}")
+        finally:
+            cleanup_voice_queue(session_id)
+            
+            # Notify Orchestrator that call ended
+            try:
+                orchestrator = OrchestratorService()
+                # Run the async method in the background since we are inside a finally block of an async func
+                # Wait, handle_session is an async function, we can just await it directly!
+                await orchestrator.handle_call_disconnected(session_id)
+            except Exception as e:
+                logger.error(f"Failed to notify orchestrator of disconnect: {e}")
 
 class DemoVoiceProvider(VoiceProvider):
     def __init__(self):

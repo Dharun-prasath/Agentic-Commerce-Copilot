@@ -5,8 +5,8 @@ export function Header({ activeTab, setActiveTab }: { activeTab: string, setActi
     { id: 'overview', label: 'Overview' },
     { id: 'live', label: 'Live Sessions' },
     { id: 'calls', label: 'Calls' },
-    { id: 'commerce', label: 'Commerce Actions' },
-    { id: 'agents', label: 'Agents' },
+    { id: 'commerce', label: 'Agentic Actions' },
+    { id: 'agents', label: 'Agent Config' },
     { id: 'api', label: 'API' },
   ];
 

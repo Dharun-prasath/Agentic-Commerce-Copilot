@@ -6,6 +6,7 @@ import { AgentStatus } from './components/AgentStatus';
 import { Customer360 } from './components/Customer360';
 import { AgentsConfigView } from './components/AgentsConfigView';
 import { ApiConfigView } from './components/ApiConfigView';
+import { AgenticActionsView } from './components/agentic_actions/AgenticActionsView';
 
 const API_BASE_URL = 'http://localhost:8000/api/v1';
 
@@ -65,9 +66,9 @@ function App() {
       {/* Main Layout Area below Navbar */}
       <div className="flex flex-1 overflow-hidden relative">
         {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto w-full">
-          <div className="p-8">
-            <div className="max-w-[1200px] mx-auto">
+        <main className="flex-1 flex w-full relative">
+          <div className={activeTab === 'commerce' ? "flex-1 flex w-full h-full" : "p-8 w-full max-w-[1200px] mx-auto overflow-y-auto h-full"}>
+            <div className="w-full h-full">
               {activeTab === 'overview' ? (
                 <>
                   <div className="flex items-center justify-between mb-6">
@@ -94,7 +95,7 @@ function App() {
                       value={stats.calls_triggered} 
                     />
                     <KpiCard 
-                      title="Commerce Actions" 
+                      title="Agentic Actions" 
                       value={stats.revenue} 
                     />
                   </div>
@@ -142,12 +143,13 @@ function App() {
                       <div className="border-t border-gray-100">
                         {agentConfigs.length > 0 ? (
                           agentConfigs.map((cfg) => {
-                            const meta = {
+                            const metaMap: Record<string, string> = {
                               intent: 'Intent Agent',
                               sales: 'Sales Consultant',
                               product: 'Product Intelligence',
                               commerce: 'Commerce Agent'
-                            }[cfg.agent_id] || cfg.agent_id;
+                            };
+                            const meta = metaMap[cfg.agent_id] || cfg.agent_id;
                             
                             return (
                               <AgentStatus 
@@ -203,6 +205,12 @@ function App() {
                 <AgentsConfigView />
               ) : activeTab === 'api' ? (
                 <ApiConfigView />
+              ) : activeTab === 'commerce' ? (
+                <AgenticActionsView />
+              ) : activeTab === 'calls' ? (
+                <div className="p-12 text-center text-gray-500">
+                  <h2 className="text-xl font-bold">Calls view merged into Agentic Actions</h2>
+                </div>
               ) : (
                 <div className="p-12 text-center text-gray-500 text-lg">
                   <h2 className="text-2xl font-bold text-gray-900 mb-2">Coming Soon</h2>

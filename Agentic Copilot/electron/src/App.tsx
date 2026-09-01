@@ -29,8 +29,18 @@ function App() {
   useEffect(() => {
     if (window.electronAPI) {
       window.electronAPI.onIncomingCall((id) => {
-        if (id) setSessionId(id)
-        setCallState('INCOMING')
+        setCallState(prevState => {
+          if (prevState !== 'IDLE' && prevState !== 'ENDED' && prevState !== 'DECLINED') {
+            console.log("Call already in progress, ignoring incoming trigger.");
+            return prevState;
+          }
+          if (id && id !== "undefined") {
+            setSessionId(id);
+          } else {
+            setSessionId(""); // clear if undefined to prevent weird state
+          }
+          return 'INCOMING';
+        });
       })
     }
   }, [])
@@ -85,12 +95,33 @@ function App() {
         const processor = captureCtx.createScriptProcessor(512, 1, 1)
         processorRef.current = processor
 
+        let silenceFrames = 0;
+        
         processor.onaudioprocess = (e) => {
           const inputData = e.inputBuffer.getChannelData(0)
           const pcm16 = new Int16Array(inputData.length)
-
+          let hasAudio = false
+          
           for (let i = 0; i < inputData.length; i++) {
-            pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767
+            const s = Math.max(-1, Math.min(1, inputData[i]))
+            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF
+            if (Math.abs(pcm16[i]) > 300) {
+              hasAudio = true
+            }
+          }
+          
+          if (hasAudio) {
+            silenceFrames = 0;
+          } else {
+            silenceFrames++;
+          }
+          
+          // If silent for more than ~1 second (30 frames of 512 samples at 16kHz), send absolute silence
+          // This allows Gemini's VAD to correctly detect end of speech despite ambient noise
+          if (silenceFrames > 30) {
+            for (let i = 0; i < pcm16.length; i++) {
+              pcm16[i] = 0;
+            }
           }
 
           if (ws.readyState === WebSocket.OPEN) {
@@ -132,8 +163,13 @@ function App() {
         }
       }
 
-      ws.onclose = () => {
+      ws.onclose = (e) => {
+        console.log("WebSocket Closed!", e.code, e.reason)
         handleEnd()
+      }
+      
+      ws.onerror = (e) => {
+        console.error("WebSocket Error!", e)
       }
 
     } catch (err: any) {
