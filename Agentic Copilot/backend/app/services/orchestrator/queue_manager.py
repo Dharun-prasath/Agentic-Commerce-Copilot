@@ -17,7 +17,7 @@ class QueueManager:
         return cls._instance
 
     def __init__(self):
-        self.delay_seconds = 30
+        self.delay_seconds = 5
         self.is_paused = False
         self.countdown_start_time = 0
         self.countdown_remaining = 0

@@ -59,7 +59,10 @@ Your job is to reason over this complete session and determine the true customer
 Do not blindly repeat the rule score. Differentiate between deep research and immediate purchase intent.
 Output a structured JSON response containing your reasoning and the context for a future Sales Consultant.
 
-CRITICAL INSTRUCTION:
+CRITICAL INSTRUCTION FOR SPEED:
+You are running locally. To ensure ultra-fast response times, KEEP ALL TEXT FIELDS (`behaviour_summary`, `reasoning`, `sales_consultant_context`) EXTREMELY SHORT (1 sentence maximum). Be direct and concise.
+
+CRITICAL INSTRUCTION FOR DATA:
 When writing `customer_interest`, `behaviour_summary`, `reasoning`, and `sales_consultant_context`, you MUST use the human-readable product names (e.g. "Dell XPS 15") and categories. NEVER output raw UUIDs in natural-language fields. The raw UUIDs should only be preserved in the `product_id` field of `products_of_interest`.
 
 IMPORTANT: You MUST return a valid JSON object containing ALL of the following keys:

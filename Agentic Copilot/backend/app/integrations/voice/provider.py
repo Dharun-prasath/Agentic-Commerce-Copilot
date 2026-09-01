@@ -158,14 +158,12 @@ class GeminiNativeAudioProvider(VoiceProvider):
                         logger.error(f"Error in check_silence: {e}")
 
                 async def receive_from_gemini():
-                    orchestrator = OrchestratorService()
                     while True:
                         try:
                             async for response in session.receive():
                                 if response.server_content and response.server_content.model_turn and response.server_content.model_turn.parts:
                                     for part in response.server_content.model_turn.parts:
                                         if part.inline_data and part.inline_data.data is not None:
-                                            # logger.info(f"Received {len(part.inline_data.data)} bytes audio from Gemini")
                                             await websocket.send_bytes(part.inline_data.data)
                                         elif part.text:
                                             logger.info(f"Gemini text: {part.text}")
@@ -173,38 +171,45 @@ class GeminiNativeAudioProvider(VoiceProvider):
                                 if response.tool_call:
                                     function_responses = []
                                     for call in response.tool_call.function_calls:
-                                        logger.info(f"Gemini requested tool: {call.name}")
+                                        name = call.name
                                         args = call.args or {}
+                                        logger.info(f"Gemini requested tool: {name} with args {args}")
+                                        
+                                        from app.services.orchestrator.service import OrchestratorService
+                                        orchestrator = OrchestratorService()
+                                        
                                         try:
-                                            if call.name == "request_product_recommendations":
-                                                # Dispatch asynchronously to orchestrator
-                                                asyncio.create_task(orchestrator.handle_product_recommendation_requested(session_id, args))
-                                                result_text = "I've asked our systems to find the best options. Waiting for results..."
+                                            result_data = {}
+                                            if name == "request_product_recommendations":
+                                                if session_id:
+                                                    await orchestrator.handle_product_recommendation_requested(session_id, args)
+                                                result_data = {"status": "queued", "message": "Product recommendations requested from Product Intelligence agent. Please wait, do not ask again."}
+                                            
+                                            elif name == "confirm_product_selection":
+                                                if session_id:
+                                                    await orchestrator.handle_product_confirmed(session_id, args.get("product_id"))
+                                                result_data = {"status": "processing", "message": "Product selection confirmed. Commerce engine is adding to cart."}
                                                 
-                                            elif call.name == "confirm_product_selection":
-                                                asyncio.create_task(orchestrator.handle_product_confirmed(session_id, args.get("product_id")))
-                                                result_text = "Product successfully selected."
-                                                
-                                            elif call.name == "end_conversation":
-                                                asyncio.create_task(orchestrator.handle_customer_not_interested(session_id))
-                                                result_text = "Conversation ended."
-                                                
+                                            elif name == "end_conversation":
+                                                if session_id:
+                                                    await orchestrator.handle_customer_not_interested(session_id)
+                                                result_data = {"status": "success", "message": "Conversation ended successfully."}
+                                            
                                             else:
-                                                result_text = "Unknown tool"
-                                                
-                                            # Return dummy success immediately to not block voice
+                                                result_data = {"status": "error", "message": f"Unknown tool {name}"}
+                                            
                                             function_responses.append(
                                                 types.FunctionResponse(
-                                                    name=call.name,
+                                                    name=name,
                                                     id=call.id,
-                                                    response={"status": "dispatched", "message": result_text}
+                                                    response=result_data
                                                 )
                                             )
                                         except Exception as e:
-                                            logger.error(f"Error executing tool {call.name}: {e}")
+                                            logger.error(f"Error executing tool {name}: {e}")
                                             function_responses.append(
                                                 types.FunctionResponse(
-                                                    name=call.name,
+                                                    name=name,
                                                     id=call.id,
                                                     response={"error": str(e)}
                                                 )

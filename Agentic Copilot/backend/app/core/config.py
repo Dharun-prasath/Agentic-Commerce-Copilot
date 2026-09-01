@@ -13,10 +13,10 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "gemini-2.5-flash-native-audio-latest"
     GEMINI_API_KEY: Optional[str] = None
     
-    INTENT_AGENT_MODEL: Optional[str] = "gemini-3.6-flash"
-    PRODUCT_AGENT_MODEL: Optional[str] = "gemini-3.6-flash"
-    SALES_AGENT_MODEL: Optional[str] = "gemini-3.6-flash"
-    COMMERCE_AGENT_MODEL: Optional[str] = "gemini-3.6-flash"
+    INTENT_AGENT_MODEL: Optional[str] = "gemini-2.5-flash"
+    PRODUCT_AGENT_MODEL: Optional[str] = "gemini-2.5-flash"
+    SALES_AGENT_MODEL: Optional[str] = "gemini-2.5-flash"
+    COMMERCE_AGENT_MODEL: Optional[str] = "gemini-2.5-flash"
     VOICE_AGENT_MODEL: Optional[str] = None
     
     WHATSAPP_MODE: str = "demo"
