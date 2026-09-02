@@ -30,7 +30,8 @@ class VoiceProvider(ABC):
 class GeminiNativeAudioProvider(VoiceProvider):
     def __init__(self):
         self.api_key = settings.GEMINI_API_KEY
-        self.model = settings.LLM_MODEL or "gemini-2.5-flash-native-audio-latest"
+        # User explicitly requested to use this model for the sales agent
+        self.model = "models/gemini-2.5-flash-native-audio-preview-12-2025"
         self.client = genai.Client(api_key=self.api_key)
         logger.info(f"Initializing Gemini Native Audio with model {self.model}")
 
@@ -81,45 +82,24 @@ class GeminiNativeAudioProvider(VoiceProvider):
             async with self.client.aio.live.connect(model=self.model, config=config) as session:
                 logger.info("Connected to Gemini Live API")
                 
-                # Prompt the AI to speak first using a system instruction, rather than sending dummy audio.
-                import time
-                last_spoken_time = time.time()
+                # Prompt the AI to speak first using the actual context
+                greeting_prompt = "SYSTEM: The call has just connected. Speak first. "
+                if context_str:
+                    greeting_prompt += f"Use the following context to greet the customer naturally and check if they are still interested:\n{context_str}"
+                else:
+                    greeting_prompt += "Greet the customer naturally."
                 
                 await session.send(
-                    input="SYSTEM: The call has just connected. Speak first and greet the customer naturally based on their intent.", 
+                    input=greeting_prompt, 
                     end_of_turn=True
                 )
                 
-                SILENCE_THRESHOLD = getattr(settings, 'VOICE_SILENCE_RMS', 200)
-                SILENCE_TIMEOUT_1 = getattr(settings, 'VOICE_SILENCE_TIMEOUT_1', 15.0)
-                SILENCE_TIMEOUT_2 = getattr(settings, 'VOICE_SILENCE_TIMEOUT_2', 30.0)
-                
-                def get_rms(pcm_data: bytes) -> float:
-                    count = len(pcm_data) // 2
-                    if count == 0: return 0.0
-                    try:
-                        shorts = struct.unpack(f"<{count}h", pcm_data)
-                        return math.sqrt(sum(s*s for s in shorts) / count)
-                    except:
-                        return 0.0
-                
                 async def send_to_gemini():
-                    nonlocal last_spoken_time
                     try:
-                        chunk_count = 0
                         while True:
                             data = await websocket.receive_bytes()
                             if not data:
                                 break
-                            
-                            chunk_count += 1
-                            if chunk_count % 100 == 0:
-                                logger.info(f"Received {chunk_count} chunks from client, last rms={get_rms(data):.2f}")
-                            
-                            if chunk_count % 5 == 0:
-                                rms = get_rms(data)
-                                if rms > SILENCE_THRESHOLD:
-                                    last_spoken_time = time.time()
                             
                             await session.send_realtime_input(
                                 media=types.Blob(data=data, mime_type="audio/pcm;rate=16000")
@@ -128,49 +108,27 @@ class GeminiNativeAudioProvider(VoiceProvider):
                         logger.info("Client WebSocket disconnected.")
                     except Exception as e:
                         logger.error(f"Error in send_to_gemini: {e}")
-                        
-                async def check_silence():
-                    nonlocal last_spoken_time
-                    prompt_1_sent = False
-                    try:
-                        while True:
-                            await asyncio.sleep(1.0)
-                            idle = time.time() - last_spoken_time
-                            if idle > SILENCE_TIMEOUT_1 and not prompt_1_sent:
-                                logger.info(f"User silent for {SILENCE_TIMEOUT_1}s. Sending check prompt.")
-                                await session.send(
-                                    input="SYSTEM: The user has been silent for 15 seconds. Please ask 'Are you still there?'",
-                                    end_of_turn=True
-                                )
-                                prompt_1_sent = True
-                            elif idle > SILENCE_TIMEOUT_2:
-                                logger.info(f"User silent for {SILENCE_TIMEOUT_2}s. Terminating.")
-                                await session.send(
-                                    input="SYSTEM: The user has been silent for over 30 seconds. Please say a polite goodbye and use the end_conversation tool immediately.",
-                                    end_of_turn=True
-                                )
-                                break
-                            elif idle < SILENCE_TIMEOUT_1:
-                                prompt_1_sent = False
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception as e:
-                        logger.error(f"Error in check_silence: {e}")
 
                 async def receive_from_gemini():
                     while True:
                         try:
                             async for response in session.receive():
-                                if response.server_content and response.server_content.model_turn and response.server_content.model_turn.parts:
-                                    for part in response.server_content.model_turn.parts:
-                                        if part.inline_data and part.inline_data.data is not None:
-                                            await websocket.send_bytes(part.inline_data.data)
-                                        elif part.text:
-                                            logger.info(f"Gemini text: {part.text}")
+                                if response.server_content:
+                                    if getattr(response.server_content, 'interrupted', False):
+                                        logger.info("Gemini interrupted, sending clear signal to frontend")
+                                        import json
+                                        await websocket.send_text(json.dumps({"action": "clear"}))
+                                        
+                                    if response.server_content.model_turn and response.server_content.model_turn.parts:
+                                        for part in response.server_content.model_turn.parts:
+                                            if part.inline_data and part.inline_data.data is not None:
+                                                await websocket.send_bytes(part.inline_data.data)
+                                            elif part.text:
+                                                logger.info(f"Gemini text: {part.text}")
                                 
                                 if response.tool_call:
                                     function_responses = []
-                                    for call in response.tool_call.function_calls:
+                                    for call in response.tool_call.function_calls or []:
                                         name = call.name
                                         args = call.args or {}
                                         logger.info(f"Gemini requested tool: {name} with args {args}")
@@ -182,12 +140,16 @@ class GeminiNativeAudioProvider(VoiceProvider):
                                             result_data = {}
                                             if name == "request_product_recommendations":
                                                 if session_id:
-                                                    await orchestrator.handle_product_recommendation_requested(session_id, args)
-                                                result_data = {"status": "queued", "message": "Product recommendations requested from Product Intelligence agent. Please wait, do not ask again."}
+                                                    # Run PI asynchronously so voice is not blocked
+                                                    asyncio.create_task(orchestrator.handle_product_recommendation_requested(session_id, args))
+                                                    result_data = {"status": "processing", "message": "Query sent to Product Intelligence. It will notify you when ready. Tell the customer you are checking."}
+                                                else:
+                                                    result_data = {"status": "error", "message": "No session ID"}
                                             
                                             elif name == "confirm_product_selection":
-                                                if session_id:
-                                                    await orchestrator.handle_product_confirmed(session_id, args.get("product_id"))
+                                                product_id = args.get("product_id")
+                                                if session_id and product_id is not None:
+                                                    await orchestrator.handle_product_confirmed(session_id, str(product_id))
                                                 result_data = {"status": "processing", "message": "Product selection confirmed. Commerce engine is adding to cart."}
                                                 
                                             elif name == "end_conversation":

@@ -69,6 +69,7 @@ class ProductIntelligenceAgent:
         """
         Takes a structured Mock Customer Requirement dict and returns structured Product Recommendations.
         """
+        import time
         config = await get_agent_config("product")
         sys_prompt = config.get("system_prompt", PRODUCT_INTELLIGENCE_SYSTEM_PROMPT)
         
@@ -80,37 +81,35 @@ class ProductIntelligenceAgent:
             max_output_tokens=config.get("max_output_tokens", 2048)
         )
         
-        # Tool binding
-        llm_with_tools = live_llm.bind_tools(self.tools)
-        
         # Structured output binding for final step
         llm_with_structured = live_llm.with_structured_output(ProductIntelligenceOutput)
         
+        # PRE-FETCH: Do the search in code to avoid 3-4 round trips of LLM tool calling (saves 5+ seconds)
+        query_parts = []
+        if mock_requirement.get("category"):
+            query_parts.append(str(mock_requirement["category"]))
+        if mock_requirement.get("brand"):
+            query_parts.append(str(mock_requirement["brand"]))
+            
+        query = " ".join(query_parts) if query_parts else "popular"
+        
+        try:
+            search_results = await demo_client.search_products_autocomplete(query)
+            products_json = json.dumps(search_results.get("products", []), indent=2)
+        except Exception as e:
+            logger.error(f"PI Agent pre-search failed: {e}")
+            products_json = "[]"
+        
         messages = [
             SystemMessage(content=sys_prompt),
-            HumanMessage(content=f"Please analyze these requirements and recommend products:\n\n{json.dumps(mock_requirement, indent=2)}")
+            HumanMessage(content=f"Please analyze these customer requirements:\n{json.dumps(mock_requirement, indent=2)}\n\nHere are the products retrieved from the catalog:\n{products_json}\n\nAct as the Product Intelligence Agent and output the structured JSON recommendations.")
         ]
         
         try:
-            # Step 1: Use tools to search and gather info
-            for _ in range(3):
-                response = await llm_with_tools.ainvoke(messages)
-                messages.append(response)
-                
-                if not response.tool_calls:
-                    break
-                    
-                for tool_call in response.tool_calls:
-                    if tool_call["name"] == "search_products":
-                        tool_msg = await search_products.ainvoke(tool_call)
-                    elif tool_call["name"] == "get_product_details":
-                        tool_msg = await get_product_details.ainvoke(tool_call)
-                    else:
-                        tool_msg = AIMessage(content="Unknown tool")
-                    messages.append(tool_msg)
-            
-            # Step 2: Now that we have context, force structured output
+            # SINGLE PASS: Directly output structured JSON
+            start_time = time.time()
             structured_response = await llm_with_structured.ainvoke(messages)
+            logger.info(f"PI Agent finished in {time.time() - start_time:.2f} seconds")
             return structured_response
             
         except Exception as e:

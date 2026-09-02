@@ -53,8 +53,7 @@ export function AgenticActionsView() {
     return () => clearInterval(interval);
   }, [activeSession]);
 
-  const setDelay = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const delay = parseInt(e.target.value);
+  const setDelay = async (delay: number) => {
     await fetch(`${API_BASE_URL}/dashboard/queue/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-Key': import.meta.env.VITE_DASHBOARD_API_KEY || '' },
@@ -141,17 +140,42 @@ export function AgenticActionsView() {
             </div>
           )}
 
-          <div className="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200">
-            <select 
-              value={config.delay_seconds} 
-              onChange={setDelay}
-              className="bg-transparent border-none text-xs font-semibold text-slate-600 focus:ring-0 cursor-pointer outline-none"
+          <div className="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200 shadow-inner">
+            <input 
+              type="number"
+              min="1"
+              value={
+                config.delay_seconds >= 3600 && config.delay_seconds % 3600 === 0 ? config.delay_seconds / 3600 :
+                config.delay_seconds >= 60 && config.delay_seconds % 60 === 0 ? config.delay_seconds / 60 :
+                config.delay_seconds
+              }
+              onChange={(e) => {
+                const val = parseInt(e.target.value) || 1;
+                const unit = 
+                  config.delay_seconds >= 3600 && config.delay_seconds % 3600 === 0 ? 3600 :
+                  config.delay_seconds >= 60 && config.delay_seconds % 60 === 0 ? 60 : 1;
+                setDelay(val * unit);
+              }}
+              className="w-12 bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 outline-none text-center p-0"
+            />
+            <select
+              value={
+                config.delay_seconds >= 3600 && config.delay_seconds % 3600 === 0 ? 3600 :
+                config.delay_seconds >= 60 && config.delay_seconds % 60 === 0 ? 60 : 1
+              }
+              onChange={(e) => {
+                const unit = parseInt(e.target.value);
+                const currentVal = 
+                  config.delay_seconds >= 3600 && config.delay_seconds % 3600 === 0 ? config.delay_seconds / 3600 :
+                  config.delay_seconds >= 60 && config.delay_seconds % 60 === 0 ? config.delay_seconds / 60 :
+                  config.delay_seconds;
+                setDelay(currentVal * unit);
+              }}
+              className="bg-transparent border-none text-xs font-semibold text-slate-500 focus:ring-0 cursor-pointer outline-none p-0 pr-6 ml-1"
             >
-              <option value="5">5s Delay</option>
-              <option value="10">10s Delay</option>
-              <option value="30">30s Delay</option>
-              <option value="60">60s Delay</option>
-              <option value="300">5m Delay</option>
+              <option value="1">Seconds</option>
+              <option value="60">Minutes</option>
+              <option value="3600">Hours</option>
             </select>
           </div>
 

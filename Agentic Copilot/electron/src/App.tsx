@@ -96,26 +96,46 @@ function App() {
         processorRef.current = processor
 
         let silenceFrames = 0;
-        
+
+        const scheduledSources: AudioBufferSourceNode[] = [];
+
         processor.onaudioprocess = (e) => {
           const inputData = e.inputBuffer.getChannelData(0)
           const pcm16 = new Int16Array(inputData.length)
           let hasAudio = false
-          
+          let peakVolume = 0;
+
           for (let i = 0; i < inputData.length; i++) {
             const s = Math.max(-1, Math.min(1, inputData[i]))
             pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF
-            if (Math.abs(pcm16[i]) > 300) {
-              hasAudio = true
+            if (Math.abs(pcm16[i]) > peakVolume) {
+              peakVolume = Math.abs(pcm16[i]);
             }
           }
-          
+
+          if (peakVolume > 3000) {
+            hasAudio = true
+          }
+
           if (hasAudio) {
             silenceFrames = 0;
+            // User interrupted/started speaking. Clear the playback queue!
+            // DISABLED: To ensure clear conversation without accidental voice interruptions
+            /*
+            if (scheduledSources.length > 0) {
+              scheduledSources.forEach(src => {
+                try { src.stop(); } catch (e) {}
+              });
+              scheduledSources.length = 0; // clear array
+              if (audioCtx) {
+                 nextPlayTime = audioCtx.currentTime;
+              }
+            }
+            */
           } else {
             silenceFrames++;
           }
-          
+
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(pcm16.buffer)
           }
@@ -151,6 +171,29 @@ function App() {
             const startTime = Math.max(nextPlayTime, audioCtx.currentTime)
             bufferSource.start(startTime)
             nextPlayTime = startTime + audioBuffer.duration
+
+            scheduledSources.push(bufferSource);
+            bufferSource.onended = () => {
+              const idx = scheduledSources.indexOf(bufferSource);
+              if (idx > -1) scheduledSources.splice(idx, 1);
+            };
+          } else if (typeof event.data === 'string') {
+            try {
+              const msg = JSON.parse(event.data);
+              if (msg.action === 'clear') {
+                if (scheduledSources.length > 0) {
+                  scheduledSources.forEach(src => {
+                    try { src.stop(); } catch (e) { }
+                  });
+                  scheduledSources.length = 0;
+                  if (audioCtx) {
+                    nextPlayTime = audioCtx.currentTime;
+                  }
+                }
+              }
+            } catch (e) {
+              console.error("Failed to parse websocket message", e);
+            }
           }
         }
       }
@@ -159,7 +202,7 @@ function App() {
         console.log("WebSocket Closed!", e.code, e.reason)
         handleEnd()
       }
-      
+
       ws.onerror = (e) => {
         console.error("WebSocket Error!", e)
       }
@@ -203,8 +246,8 @@ function App() {
       <button
         onClick={onClick}
         className={`w-16 h-16 rounded-full flex items-center justify-center transition-all ${isActive
-            ? 'bg-white text-black'
-            : 'bg-[#2C2C2C] text-white hover:bg-[#3C3C3C]'
+          ? 'bg-white text-black'
+          : 'bg-[#2C2C2C] text-white hover:bg-[#3C3C3C]'
           }`}
       >
         <Icon size={28} strokeWidth={1.5} />

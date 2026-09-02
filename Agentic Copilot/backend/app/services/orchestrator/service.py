@@ -15,6 +15,9 @@ from app.services.intent_intelligence.session import build_session_summary
 from app.integrations.telegram.provider import get_telegram_provider
 from app.services.commerce.engine import CommerceEngine
 import time
+import asyncio
+
+_bg_tasks = set()
 
 logger = logging.getLogger(__name__)
 
@@ -151,11 +154,12 @@ class OrchestratorService:
             # Run product intelligence (will be refactored to take structured requirement)
             recommendations = await pi_agent.generate_recommendations(requirement)
             
-            await self._handle_product_recommendations(job_id, session_id, recommendations)
+            return await self._handle_product_recommendations(job_id, session_id, recommendations)
             
         except Exception as e:
             logger.error(f"Failed to trigger product intelligence: {e}")
             await self._mark_failed(job_id, str(e))
+            return {"status": "failed", "error": str(e)}
 
 
     async def _handle_product_recommendations(self, job_id: str, session_id: str, recommendations: Any):
@@ -198,22 +202,24 @@ class OrchestratorService:
                 products = recs_dict.get("recommendations", [])
                 summary = recs_dict.get("recommendation_summary") or recs_dict.get("comparison_summary", "Here are some recommendations for you!")
                 
-                asyncio.create_task(telegram.send_recommendation_summary(chat_id, summary, products))
+                # Use module-level _bg_tasks
+                global _bg_tasks
+                task = asyncio.create_task(telegram.send_recommendation_summary(chat_id, summary, products))
+                _bg_tasks.add(task)
+                task.add_done_callback(_bg_tasks.discard)
                 logger.info(f"Orchestrator successfully routed recommendations to Telegram asynchronously for {session_id}")
             else:
                 logger.info(f"No Telegram chat ID found for session {session_id}. Recommendations generated but not sent.")
 
-            # Push event to voice queue
+            # We dispatch the result asynchronously to the voice agent via event queue
             from app.integrations.voice.events import push_voice_event
-            await push_voice_event(session_id, "PRODUCT_RECOMMENDATIONS_READY", recs_dict)
-
-            # Keep the status as PRODUCT_RECOMMENDATIONS_READY
-            # Do NOT mark as COMPLETED here, because the voice call is still ongoing.
-            # handle_call_disconnected will mark it as COMPLETED when the user hangs up.
+            push_voice_event(session_id, "PRODUCT_RECOMMENDATIONS_READY", recs_dict)
+            return recs_dict
 
         except Exception as e:
             logger.error(f"Failed to handle product recommendations: {e}")
             await self._mark_failed(job_id, str(e))
+            return {"status": "failed", "error": str(e)}
 
 
     async def process_commerce_action(self, session_id: str, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -262,12 +268,12 @@ class OrchestratorService:
             job = res.scalar_one_or_none()
             if not job:
                 logger.error(f"Cannot find job for session {session_id} to request PI.")
-                return
+                return {"status": "error"}
             job.status = "PRODUCT_RECOMMENDATION_REQUESTED"
             await db.commit()
             job_id = job.id
             
-        asyncio.create_task(self._trigger_product_intelligence(job_id, session_id, requirements))
+        return await self._trigger_product_intelligence(job_id, session_id, requirements)
 
     async def handle_product_confirmed(self, session_id: str, product_id: str):
         """

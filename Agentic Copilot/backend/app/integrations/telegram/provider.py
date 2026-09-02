@@ -195,9 +195,11 @@ class RealTelegramProvider(TelegramProvider):
             "parse_mode": "HTML"
         })
 
-        # Send each product card
-        for i, product in enumerate(products, 1):
-            await self.send_product_card(chat_id, product)
+        import asyncio
+        
+        # Send each product card in parallel
+        tasks = [self.send_product_card(chat_id, product) for product in products]
+        await asyncio.gather(*tasks)
 
         # Send footer
         await self._post("sendMessage", {

@@ -123,16 +123,19 @@ async def build_execution_graph(session_id: str, db: AsyncSession):
                 active_edges.append("e_orch_to_pi")
                 add_event(job.updated_at, "PRODUCT_INTELLIGENCE_RUNNING")
                 
-            if job.status == "PRODUCT_RECOMMENDATIONS_READY":
+            if job.status in ["PRODUCT_RECOMMENDATIONS_READY", "COMMERCE_PROCESSING", "COMMERCE_COMPLETED"]:
+                # When recommendations are ready, the PI node has finished processing, but we want to show the results flowing.
                 nodes["n_product_intelligence"]["status"] = "IDLE"
                 active_edges.append("e_pi_to_orch")
-                add_event(job.updated_at, "PRODUCT_RECOMMENDATIONS_READY")
                 
-                # Check telegram
+                # We also trigger Telegram in parallel
                 nodes["n_telegram"]["status"] = "RUNNING"
-                active_edges.append("e_orch_to_tg") # Actually e_orch_to_tel doesn't exist, we use e_pi_to_tel in the old code, wait, I re-wired it in frontend to n_orchestrator -> n_telegram, but let's just emit an edge ID the frontend knows.
-                # In ExecutionGraph we mapped e.target === 'n_telegram' to e.source = 'n_orchestrator'
-                # Let's emit e_orch_to_tel. Wait, the fixed edges list in this file has e_pi_to_tel.
+                active_edges.append("e_orch_to_tg") 
+                
+                if job.status == "PRODUCT_RECOMMENDATIONS_READY":
+                    # Display the flow to Sales Consultant in parallel with Telegram
+                    active_edges.append("e_orch_to_sc")
+                    add_event(job.updated_at, "PRODUCT_RECOMMENDATIONS_READY")
                 
             # COMMERCE
             if job.status == "COMMERCE_PROCESSING":
