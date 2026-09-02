@@ -57,6 +57,9 @@ class QueueManager:
                     await asyncio.sleep(1)
                     continue
 
+                next_job_id = None
+                next_session_id = None
+                
                 async with async_session_maker() as db:
                     # Check for active jobs
                     active_res = await db.execute(
@@ -68,53 +71,57 @@ class QueueManager:
                     if active_jobs:
                         # Session is actively processing
                         self.is_counting_down = False
-                        await asyncio.sleep(1)
-                        continue
-
-                    # No active jobs. Get the next queued job.
-                    queued_res = await db.execute(
-                        select(OrchestratorJob)
-                        .where(OrchestratorJob.status == "QUEUED")
-                        .order_by(OrchestratorJob.created_at)
-                    )
-                    next_job = queued_res.scalars().first()
-
-                    if next_job:
-                        # Start countdown
-                        self.is_counting_down = True
-                        self.countdown_start_time = time.time()
-                        self._skip_delay_event.clear()
-                        
-                        while True:
-                            elapsed = time.time() - self.countdown_start_time
-                            remaining = max(0, self.delay_seconds - int(elapsed))
-                            self.countdown_remaining = remaining
-                            
-                            if remaining <= 0 or self._skip_delay_event.is_set():
-                                break
-                            
-                            if self.is_paused:
-                                # Pause countdown timer? For now, we'll just freeze the remaining time logic 
-                                # by not incrementing elapsed if paused, but time.time() keeps moving.
-                                # Let's just wait out the pause.
-                                await asyncio.sleep(1)
-                                continue
-                                
-                            await asyncio.sleep(0.5)
-                            
-                        # Countdown complete. Process the job.
-                        if not self.is_paused:
-                            self.is_counting_down = False
-                            next_job.status = "TRIGGERING_INTENT_AGENT"
-                            await db.commit()
-                            
-                            # Trigger async
-                            from app.services.orchestrator.service import OrchestratorService
-                            orchestrator = OrchestratorService()
-                            asyncio.create_task(orchestrator._trigger_intent_agent(next_job.session_id, next_job.id))
                     else:
+                        # No active jobs. Get the next queued job.
+                        queued_res = await db.execute(
+                            select(OrchestratorJob)
+                            .where(OrchestratorJob.status == "QUEUED")
+                            .order_by(OrchestratorJob.created_at)
+                        )
+                        next_job = queued_res.scalars().first()
+                        if next_job:
+                            next_job_id = next_job.id
+                            next_session_id = next_job.session_id
+
+                if next_job_id:
+                    # Start countdown OUTSIDE the DB session to prevent connection exhaustion
+                    self.is_counting_down = True
+                    self.countdown_start_time = time.time()
+                    self._skip_delay_event.clear()
+                    
+                    while True:
+                        elapsed = time.time() - self.countdown_start_time
+                        remaining = max(0, self.delay_seconds - int(elapsed))
+                        self.countdown_remaining = remaining
+                        
+                        if remaining <= 0 or self._skip_delay_event.is_set():
+                            break
+                        
+                        if self.is_paused:
+                            await asyncio.sleep(1)
+                            continue
+                            
+                        await asyncio.sleep(0.5)
+                        
+                    # Countdown complete. Process the job.
+                    if not self.is_paused:
                         self.is_counting_down = False
-                        await asyncio.sleep(1)
+                        
+                        # Re-acquire DB connection to update status
+                        async with async_session_maker() as db:
+                            job_res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.id == next_job_id))
+                            job = job_res.scalar_one_or_none()
+                            if job and job.status == "QUEUED":
+                                job.status = "TRIGGERING_INTENT_AGENT"
+                                await db.commit()
+                                
+                                # Trigger async
+                                from app.services.orchestrator.service import OrchestratorService
+                                orchestrator = OrchestratorService()
+                                asyncio.create_task(orchestrator._trigger_intent_agent(next_session_id, next_job_id))
+                else:
+                    self.is_counting_down = False
+                    await asyncio.sleep(1)
 
             except Exception as e:
                 logger.error(f"QueueManager error: {e}")

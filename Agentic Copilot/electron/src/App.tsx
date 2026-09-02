@@ -116,14 +116,6 @@ function App() {
             silenceFrames++;
           }
           
-          // If silent for more than ~1 second (30 frames of 512 samples at 16kHz), send absolute silence
-          // This allows Gemini's VAD to correctly detect end of speech despite ambient noise
-          if (silenceFrames > 30) {
-            for (let i = 0; i < pcm16.length; i++) {
-              pcm16[i] = 0;
-            }
-          }
-
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(pcm16.buffer)
           }

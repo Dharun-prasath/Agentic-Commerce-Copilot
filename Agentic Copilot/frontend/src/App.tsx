@@ -155,7 +155,7 @@ function App() {
                               <AgentStatus 
                                 key={cfg.agent_id}
                                 name={meta} 
-                                reqs={cfg.is_active ? "Online" : "Paused"} 
+                                reqs={cfg.is_active ? cfg.model_name : "Paused"} 
                                 health={cfg.is_active ? "optimal" : "idle"} 
                               />
                             );
