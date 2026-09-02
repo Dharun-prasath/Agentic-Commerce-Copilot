@@ -50,5 +50,5 @@ def main():
         kill_process_on_port(5173)
         sys.exit(0)
 
-if __name__ == "__main__":
+if __name__ == "__main__":                   
     main()

@@ -9,6 +9,9 @@ from google.genai import types
 
 logger = logging.getLogger(__name__)
 
+# Keep strong references to background tasks to prevent garbage collection
+_bg_tasks = set()
+
 from sqlalchemy.future import select
 from app.core.database import get_db
 from app.models.models import CustomerSession
@@ -141,7 +144,11 @@ class GeminiNativeAudioProvider(VoiceProvider):
                                             if name == "request_product_recommendations":
                                                 if session_id:
                                                     # Run PI asynchronously so voice is not blocked
-                                                    asyncio.create_task(orchestrator.handle_product_recommendation_requested(session_id, args))
+                                                    # Keep a strong reference to prevent GC from killing the task
+                                                    global _bg_tasks
+                                                    task = asyncio.create_task(orchestrator.handle_product_recommendation_requested(session_id, args))
+                                                    _bg_tasks.add(task)
+                                                    task.add_done_callback(_bg_tasks.discard)
                                                     result_data = {"status": "processing", "message": "Query sent to Product Intelligence. It will notify you when ready. Tell the customer you are checking."}
                                                 else:
                                                     result_data = {"status": "error", "message": "No session ID"}

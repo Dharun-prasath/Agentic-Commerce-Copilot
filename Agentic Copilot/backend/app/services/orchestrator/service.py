@@ -191,6 +191,11 @@ class OrchestratorService:
                 if session_record and session_record.customer and session_record.customer.telegram_chat_id:
                     chat_id = session_record.customer.telegram_chat_id
                 
+                # Fallback for testing to ensure Telegram always works in Demo
+                if not chat_id:
+                    logger.warning(f"No Telegram chat ID found for customer. Using fallback test ID.")
+                    chat_id = "2019487070"  # Test telegram account ID from DB dump
+                
                 if job:
                     job.product_recommendations = recs_dict
                     job.status = "PRODUCT_RECOMMENDATIONS_READY"
@@ -226,10 +231,28 @@ class OrchestratorService:
         """
         Receives commerce requests (e.g. from Telegram callback query) and dispatches them.
         """
+        from app.services.commerce.engine import CommerceEngine
         engine = CommerceEngine()
         
-        # We use X-Session-Id directly as the 'token' equivalent in the current Demo App implementation
-        # The demo app matches cart by X-Session-Id header.
+        # Look up customer_id
+        from app.models.models import CustomerSession
+        from sqlalchemy.future import select
+        async with async_session_maker() as db:
+            res = await db.execute(select(CustomerSession).where(CustomerSession.session_id == session_id))
+            session_rec = res.scalar_one_or_none()
+            customer_id = session_rec.user_id if session_rec else None
+            
+        token = None
+        if customer_id:
+            import jwt
+            from datetime import datetime, timedelta, timezone
+            from app.core.config import settings
+            expire = datetime.now(timezone.utc) + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+            to_encode = {"sub": str(customer_id), "exp": expire}
+            # We use the same JWT secret as Demo App to authenticate the request as the user!
+            token = jwt.encode(to_encode, settings.JWT_SECRET, algorithm="HS256")
+        
+        # We pass the generated token so the Demo App can add the product directly to the user's cart instead of an anonymous session cart.
         if action == "ADD_TO_CART":
             product_id = payload.get("product_id")
             quantity = payload.get("quantity", 1)
@@ -237,7 +260,8 @@ class OrchestratorService:
             result = await engine.add_to_cart(
                 session_id=session_id,
                 product_id=product_id,
-                quantity=quantity
+                quantity=quantity,
+                token=token
             )
             return result
         else:

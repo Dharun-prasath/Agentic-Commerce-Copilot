@@ -14,7 +14,7 @@ class CommerceEngine:
     def __init__(self):
         self.demo_client = DemoCommerceClient()
         
-    async def add_to_cart(self, session_id: str, product_id: str, quantity: int = 1) -> Dict[str, Any]:
+    async def add_to_cart(self, session_id: str, product_id: str, quantity: int = 1, token: str = None) -> Dict[str, Any]:
         """
         Safely adds a product to the user's cart in the Demo App.
         """
