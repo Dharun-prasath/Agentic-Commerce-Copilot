@@ -214,8 +214,19 @@ class GeminiNativeAudioProvider(VoiceProvider):
                             logger.info(f"Voice Session received internal event: {event_type}")
                             
                             if event_type == "PRODUCT_RECOMMENDATIONS_READY":
+                                # Extract essential info for the voice agent to prevent token overload
+                                recs = data.get("recommendations", [])
+                                simplified_recs = []
+                                for r in recs:
+                                    simplified_recs.append({
+                                        "product_id": r.get("product_id"),
+                                        "name": r.get("product_name"),
+                                        "price": f"₹{r.get('price', 0)}",
+                                        "why_it_matches": r.get("match_reason")
+                                    })
+                                
                                 # Push to Gemini as a system text update
-                                message = f"SYSTEM UPDATE: The product intelligence system has returned the following options for the user. Explain them naturally based on their needs:\n\n{json.dumps(data, indent=2)}"
+                                message = f"SYSTEM UPDATE: Product recommendations are ready. SPEAK NOW and explain these options to the customer conversationally (keep it brief):\n\n{json.dumps(simplified_recs, indent=2)}"
                                 await session.send(
                                     input=message,
                                     end_of_turn=True
