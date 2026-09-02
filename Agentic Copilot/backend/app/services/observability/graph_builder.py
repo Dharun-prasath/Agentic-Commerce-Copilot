@@ -3,7 +3,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from app.models.models import (
     CustomerSession, IntentAssessment, OrchestratorJob, 
-    BehaviorEvent, CommerceAction, AgentExecution
+    BehaviorEvent, CommerceAction, ExecutionTrace
 )
 
 async def build_execution_graph(session_id: str, db: AsyncSession):
@@ -21,23 +21,22 @@ async def build_execution_graph(session_id: str, db: AsyncSession):
     if not session:
         return {"nodes": [], "edges": [], "timeline": [], "active_edges": []}
 
-    # Fetch Orchestrator job
-    job_result = await db.execute(
-        select(OrchestratorJob).where(OrchestratorJob.session_id == session_id)
+    # Get all jobs for this session
+    res = await db.execute(
+        select(OrchestratorJob)
+        .where(OrchestratorJob.session_id == session_id)
+        .order_by(OrchestratorJob.created_at.asc())
     )
-    job = job_result.scalar_one_or_none()
-
-    # Fetch Agent Executions (PI / others)
-    exec_result = await db.execute(
-        select(AgentExecution).where(AgentExecution.session_id == session_id).order_by(AgentExecution.created_at)
+    jobs = res.scalars().all()
+    job = jobs[-1] if jobs else None
+    
+    # Get all commerce actions
+    res_commerce = await db.execute(
+        select(CommerceAction)
+        .where(CommerceAction.session_id == session_id)
+        .order_by(CommerceAction.created_at.asc())
     )
-    executions = exec_result.scalars().all()
-
-    # Fetch Commerce Actions
-    commerce_result = await db.execute(
-        select(CommerceAction).where(CommerceAction.session_id == session_id).order_by(CommerceAction.created_at)
-    )
-    commerce_actions = commerce_result.scalars().all()
+    commerce_actions = res_commerce.scalars().all()
 
     # Initialize fixed nodes with IDLE state
     nodes = {
@@ -165,6 +164,37 @@ async def build_execution_graph(session_id: str, db: AsyncSession):
             if "FAILED" in job.status:
                 nodes["n_orchestrator"]["status"] = "FAILED"
                 add_event(job.updated_at, "ORCHESTRATOR_FAILED", job.error)
+                
+        # --- ATTACH EXECUTION TRACES ---
+        from app.models.models import ExecutionTrace
+        
+        # Get all traces for this session
+        res = await db.execute(
+            select(ExecutionTrace).where(ExecutionTrace.session_id == session_id).order_by(ExecutionTrace.start_time.asc())
+        )
+        traces = res.scalars().all()
+        
+        # Map traces to nodes
+        for trace in traces:
+            cid = trace.component_id
+            if cid in nodes:
+                # Store full trace inside details (will overwrite previous traces for the same node, 
+                # so we get the most recent one since we ordered by start_time.asc)
+                nodes[cid]["details"] = {
+                    "trace_id": trace.id,
+                    "status": trace.status,
+                    "duration_ms": trace.duration_ms,
+                    "inputs": trace.inputs,
+                    "outputs": trace.outputs,
+                    "events": trace.events,
+                    "tool_calls": trace.tool_calls,
+                    "error_details": trace.error_details,
+                    "start_time": trace.start_time,
+                    "end_time": trace.end_time
+                }
+                # Also set node status if trace is RUNNING or FAILED to make it highly accurate
+                if trace.status in ["RUNNING", "FAILED"]:
+                    nodes[cid]["status"] = trace.status
                 
     else:
         nodes["n_rule_intent"]["status"] = "RUNNING"

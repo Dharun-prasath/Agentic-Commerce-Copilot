@@ -113,6 +113,7 @@ class GeminiNativeAudioProvider(VoiceProvider):
                         logger.error(f"Error in send_to_gemini: {e}")
 
                 async def receive_from_gemini():
+                    global _bg_tasks
                     while True:
                         try:
                             async for response in session.receive():
@@ -133,7 +134,16 @@ class GeminiNativeAudioProvider(VoiceProvider):
                                     function_responses = []
                                     for call in response.tool_call.function_calls or []:
                                         name = call.name
-                                        args = call.args or {}
+                                        
+                                        # Safely convert protobuf MapComposite to a standard Python dictionary
+                                        def proto_to_dict(obj):
+                                            if hasattr(obj, 'items'):
+                                                return {k: proto_to_dict(v) for k, v in obj.items()}
+                                            elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes)):
+                                                return [proto_to_dict(x) for x in obj]
+                                            return obj
+                                            
+                                        args = proto_to_dict(call.args) if call.args else {}
                                         logger.info(f"Gemini requested tool: {name} with args {args}")
                                         
                                         from app.services.orchestrator.service import OrchestratorService
@@ -145,7 +155,6 @@ class GeminiNativeAudioProvider(VoiceProvider):
                                                 if session_id:
                                                     # Run PI asynchronously so voice is not blocked
                                                     # Keep a strong reference to prevent GC from killing the task
-                                                    global _bg_tasks
                                                     task = asyncio.create_task(orchestrator.handle_product_recommendation_requested(session_id, args))
                                                     _bg_tasks.add(task)
                                                     task.add_done_callback(_bg_tasks.discard)
@@ -156,8 +165,10 @@ class GeminiNativeAudioProvider(VoiceProvider):
                                             elif name == "confirm_product_selection":
                                                 product_id = args.get("product_id")
                                                 if session_id and product_id is not None:
-                                                    await orchestrator.handle_product_confirmed(session_id, str(product_id))
-                                                result_data = {"status": "processing", "message": "Product selection confirmed. Commerce engine is adding to cart."}
+                                                    task = asyncio.create_task(orchestrator.handle_product_confirmed(session_id, str(product_id)))
+                                                    _bg_tasks.add(task)
+                                                    task.add_done_callback(_bg_tasks.discard)
+                                                result_data = {"status": "processing", "message": "Product selection confirmed. Commerce engine is adding to cart. Wait for the COMMERCE_RESULT system update before ending the call."}
                                                 
                                             elif name == "end_conversation":
                                                 if session_id:

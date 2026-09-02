@@ -45,23 +45,20 @@ export function DetailDrawer({ selectedNode, selectedEdge, onClose }: DetailDraw
               </span>
             </div>
             
-            {(selectedNode.data.details as any)?.action && (
-              <div>
-                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Action</div>
-                <div className="font-mono text-xs text-gray-700 break-all bg-gray-50 p-2 rounded border border-gray-100">
-                  {(selectedNode.data.details as any).action}
+            {Object.entries((selectedNode.data.details as Record<string, any>) || {})
+              .filter(([key]) => key !== 'error')
+              .map(([key, value]) => (
+              <div key={key}>
+                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">{key.replace(/_/g, ' ')}</div>
+                <div className="font-mono text-[11px] text-gray-700 break-words bg-gray-50 p-2.5 rounded border border-gray-200 overflow-x-auto max-h-[300px] overflow-y-auto shadow-sm">
+                  {typeof value === 'object' && value !== null ? (
+                    <pre className="whitespace-pre-wrap leading-relaxed">{JSON.stringify(value, null, 2)}</pre>
+                  ) : (
+                    String(value)
+                  )}
                 </div>
               </div>
-            )}
-            
-            {(selectedNode.data.details as any)?.product && (
-              <div>
-                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Product ID</div>
-                <div className="font-mono text-xs text-gray-700 break-all bg-gray-50 p-2 rounded border border-gray-100">
-                  {(selectedNode.data.details as any).product}
-                </div>
-              </div>
-            )}
+            ))}
             
             {(selectedNode.data.details as any)?.error && (
               <div className="mt-4 p-3 bg-red-50 border border-red-100 rounded-lg">

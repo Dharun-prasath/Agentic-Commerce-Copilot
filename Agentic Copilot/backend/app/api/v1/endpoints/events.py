@@ -27,17 +27,17 @@ async def ingest_event(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
-    # Ignore anonymous sessions
-    if not payload.user_id or payload.user_id == "unknown":
-        return {"status": "ignored", "message": "Anonymous sessions are not tracked"}
+    # Allow anonymous sessions (user_id can be None)
+    # We track all sessions so the Copilot can function for unauthenticated users as well.
+    actual_user_id = payload.user_id if payload.user_id and payload.user_id != "unknown" else None
 
     # Upsert Customer if user_name is present
     user_name = payload.event_metadata.get("user_name") if payload.event_metadata else None
-    if payload.user_id and user_name:
+    if actual_user_id and user_name:
         from app.models.models import Customer
-        customer = await db.get(Customer, payload.user_id)
+        customer = await db.get(Customer, actual_user_id)
         if not customer:
-            customer = Customer(id=payload.user_id, name=user_name)
+            customer = Customer(id=actual_user_id, name=user_name)
             db.add(customer)
         elif customer.name != user_name and user_name != "Unknown User":
             customer.name = user_name
@@ -47,7 +47,7 @@ async def ingest_event(
     if not session_obj:
         session_obj = CustomerSession(
             session_id=payload.session_id,
-            user_id=payload.user_id,
+            user_id=actual_user_id,
             last_active=datetime.utcnow().isoformat() + "Z"
         )
         db.add(session_obj)

@@ -48,11 +48,19 @@ class IntentAgent:
             print(f"DEBUG: IntentAgent failed to init structured output: {e}")
             raise
             
-    async def analyze_intent_structured(self, structured_input: dict) -> StructuredIntentOutput:
-        try:
-            config = await get_agent_config("intent")
-            # We use a dedicated prompt for the new structured reasoning
-            sys_prompt = """You are the Intent Intelligence Engine.
+    async def analyze_intent_structured(self, structured_input: Dict[str, Any], session_id: str) -> StructuredIntentOutput:
+        from app.core.telemetry import trace
+        import time
+        import json
+        
+        async with trace("n_intent_agent", "agent", session_id) as t:
+            t.set_input(structured_input)
+            t.add_event("Starting Intent Analysis")
+            
+            try:
+                config = await get_agent_config("intent")
+                # We use a dedicated prompt for the new structured reasoning
+                sys_prompt = """You are the Intent Intelligence Engine.
 You receive a structured summary of a customer's shopping session.
 The session contains deterministic rule-based scores and behavioral signals.
 Your job is to reason over this complete session and determine the true customer intent.
@@ -64,36 +72,36 @@ You are running locally. To ensure ultra-fast response times, KEEP ALL TEXT FIEL
 
 CRITICAL INSTRUCTION FOR DATA:
 When writing `customer_interest`, `behaviour_summary`, `reasoning`, and `sales_consultant_context`, you MUST use the human-readable product names (e.g. "Dell XPS 15") and categories. NEVER output raw UUIDs in natural-language fields. The raw UUIDs should only be preserved in the `product_id` field of `products_of_interest`.
-
-IMPORTANT: You MUST return a valid JSON object containing ALL of the following keys:
-- intent_category
-- confidence
-- products_of_interest
-- categories_of_interest
-- reasoning
-- recommended_action
-- sales_consultant_context
 """
-            
-            if config.get("temperature") is not None:
-                live_llm = get_llm(
-                    model_name=config.get("model_name", settings.INTENT_AGENT_MODEL or settings.LLM_MODEL),
-                    temperature=config.get("temperature", 0.0),
-                    top_p=config.get("top_p", 0.9),
-                    top_k=config.get("top_k", 40),
-                    max_output_tokens=config.get("max_output_tokens", 1024)
-                )
-                structured_llm = live_llm.with_structured_output(StructuredIntentOutput)
-            else:
-                structured_llm = self.structured_llm_new
+                
+                if config.get("temperature") is not None:
+                    live_llm = get_llm(
+                        model_name=config.get("model_name", settings.INTENT_AGENT_MODEL or settings.LLM_MODEL),
+                        temperature=config.get("temperature", 0.0),
+                        top_p=config.get("top_p", 0.9),
+                        top_k=config.get("top_k", 40),
+                        max_output_tokens=config.get("max_output_tokens", 1024)
+                    )
+                    structured_llm = live_llm.with_structured_output(StructuredIntentOutput)
+                else:
+                    structured_llm = self.structured_llm_new
 
-            import json
-            prompt = f"{sys_prompt}\n\nSession Summary:\n{json.dumps(structured_input, indent=2)}"
-            result = await structured_llm.ainvoke(prompt)
-            return result
-        except Exception as e:
-            logger.error(f"Error analyzing intent: {str(e)}")
-            raise
+                prompt = f"{sys_prompt}\n\nSession Summary:\n{json.dumps(structured_input, indent=2)}"
+                
+                t.add_event("Calling LLM for intent analysis")
+                start_time = time.time()
+                result = await structured_llm.ainvoke(prompt)
+                end_time = time.time()
+                
+                t.add_tool_call("llm", "ainvoke", "structured_input", start_time, end_time, "SUCCESS", result.model_dump())
+                t.set_output(result.model_dump())
+                t.add_event(f"Intent detected: {result.intent_category} (confidence: {result.confidence})")
+                
+                return result
+            except Exception as e:
+                logger.error(f"Error in IntentAgent analysis: {e}")
+                t.set_error(e)
+                raise
         
     async def analyze_intent(self, events: List[Dict[str, Any]]) -> IntentOutput:
         try:

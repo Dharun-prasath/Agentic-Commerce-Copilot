@@ -54,18 +54,22 @@ class RealTelegramProvider(TelegramProvider):
         if not self.token:
             return False
 
-        name = product.get("product_name", "Product")
-        brand = product.get("brand", "")
-        category = product.get("category", "")
+        import html
+        
+        name = html.escape(product.get("product_name", "Product"))
+        brand = html.escape(product.get("brand", ""))
+        category = html.escape(product.get("category", ""))
         price = product.get("price", 0)
         original_price = product.get("original_price", 0)
         rating = product.get("rating", 0)
         review_count = product.get("review_count", 0)
         match_score = product.get("match_score", 0)
-        match_reason = product.get("match_reason", "")
-        key_features = product.get("key_features", [])
+        match_reason = html.escape(product.get("match_reason", ""))
+        
+        raw_features = product.get("key_features", [])
+        key_features = [html.escape(f) for f in raw_features] if raw_features else []
+        
         product_url = product.get("product_url", "")
-
         image_url = product.get("image_url", "")
 
         # Build score indicator
@@ -123,8 +127,17 @@ class RealTelegramProvider(TelegramProvider):
         # Build inline keyboard with product link button
         inline_keyboard = []
         if product_url:
+            base_url = settings.DEMO_APP_BASE_URL.replace("/api/v1", "")
+            if "localhost" in base_url or "127.0.0.1" in base_url:
+                base_url = "https://example.com" # Telegram blocks localhost URLs
+                
+            if product_url.startswith("/"):
+                full_product_url = f"{base_url}{product_url}"
+            else:
+                full_product_url = product_url if product_url.startswith("http") else f"{base_url}/{product_url}"
+                
             inline_keyboard.append([
-                {"text": "🛒 View Product", "url": product_url}
+                {"text": "🛒 View Product", "url": full_product_url}
             ])
             
         reply_markup = {"inline_keyboard": inline_keyboard} if inline_keyboard else None

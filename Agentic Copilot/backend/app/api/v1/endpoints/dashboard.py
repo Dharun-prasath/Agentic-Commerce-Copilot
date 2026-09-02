@@ -318,6 +318,31 @@ async def retry_session_execution(session_id: str):
     from app.services.orchestrator.service import OrchestratorService
     await OrchestratorService().retry_session(session_id)
     # Also skip delay if queue is empty or this is the current next
+    from app.services.orchestrator.queue_manager import QueueManager
+    QueueManager.get_instance().skip_delay()
+    return {"status": "retrying"}
+
+@router.post("/execution/{session_id}/stop")
+async def stop_session_execution(session_id: str, db: AsyncSession = Depends(get_db)):
+    from app.models.models import OrchestratorJob, CustomerSession
+    from sqlalchemy.future import select
+    try:
+        job_res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.session_id == session_id))
+        job = job_res.scalar_one_or_none()
+        if job and job.status not in ["COMPLETED", "FAILED", "CUSTOMER_NOT_INTERESTED"]:
+            job.status = "FAILED"
+            job.error = "Manually stopped by user."
+            
+        sess_res = await db.execute(select(CustomerSession).where(CustomerSession.session_id == session_id))
+        sess = sess_res.scalar_one_or_none()
+        if sess:
+            sess.status = "TERMINATED"
+            
+        await db.commit()
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Error stopping session: {e}")
+        return {"status": "error"}
     QueueManager.get_instance().skip_delay()
     return {"status": "retrying"}
 

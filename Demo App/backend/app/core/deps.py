@@ -1,6 +1,6 @@
 """FastAPI dependency injection helpers."""
 from typing import Optional
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,9 +14,16 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=F
 
 async def get_current_user_optional(
     token: Optional[str] = Depends(oauth2_scheme),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     db: AsyncSession = Depends(get_db),
 ) -> Optional[User]:
     """Returns the current user or None (for anonymous access)."""
+    if x_user_id:
+        result = await db.execute(select(User).where(User.id == x_user_id))
+        user = result.scalar_one_or_none()
+        if user and user.is_active:
+            return user
+            
     if not token:
         return None
     payload = decode_access_token(token)

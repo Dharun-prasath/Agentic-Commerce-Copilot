@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     VOICE_MODE: str = "real"
     VOICE_PROVIDER: str = "gemini-native-audio"
     
-    JWT_SECRET: str = "secret"
+    JWT_SECRET: str = "change-this-to-a-random-secret-at-least-32-chars"
     JWT_EXPIRE_MINUTES: int = 10080
     
     ELECTRON_API_URL: str = "http://localhost:5174"

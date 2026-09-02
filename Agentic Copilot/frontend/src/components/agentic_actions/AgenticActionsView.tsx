@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { ExecutionGraph } from './ExecutionGraph';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Play, Pause, SkipForward, RotateCcw } from 'lucide-react';
+import { Play, Pause, SkipForward, RotateCcw, Square } from 'lucide-react';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -82,6 +82,15 @@ export function AgenticActionsView() {
   const retrySession = async () => {
     if (!activeSession) return;
     await fetch(`${API_BASE_URL}/dashboard/execution/${activeSession}/retry`, {
+      method: 'POST',
+      headers: { 'X-API-Key': import.meta.env.VITE_DASHBOARD_API_KEY || '' }
+    });
+    fetchQueue();
+  };
+
+  const stopSession = async () => {
+    if (!activeSession) return;
+    await fetch(`${API_BASE_URL}/dashboard/execution/${activeSession}/stop`, {
       method: 'POST',
       headers: { 'X-API-Key': import.meta.env.VITE_DASHBOARD_API_KEY || '' }
     });
@@ -213,15 +222,24 @@ export function AgenticActionsView() {
         )}
       </div>
 
-      {/* Retry Button Overlay */}
+      {/* Action Buttons Overlay */}
       {activeSession && (
-        <button
-          onClick={retrySession}
-          className="absolute bottom-6 right-6 flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-full shadow-lg font-semibold text-sm transition-transform hover:-translate-y-0.5 active:translate-y-0 z-50"
-        >
-          <RotateCcw size={16} />
-          Retry Session
-        </button>
+        <div className="absolute bottom-6 right-6 flex items-center gap-3 z-50">
+          <button
+            onClick={stopSession}
+            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-full shadow-lg font-semibold text-sm transition-transform hover:-translate-y-0.5 active:translate-y-0"
+          >
+            <Square size={16} fill="currentColor" />
+            Stop Session
+          </button>
+          <button
+            onClick={retrySession}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-full shadow-lg font-semibold text-sm transition-transform hover:-translate-y-0.5 active:translate-y-0"
+          >
+            <RotateCcw size={16} />
+            Retry Session
+          </button>
+        </div>
       )}
     </div>
   );

@@ -43,9 +43,11 @@ class DemoCommerceClient:
             headers["Authorization"] = f"Bearer {token}"
         return await self._request("GET", "/cart", headers=headers)
 
-    async def add_to_cart(self, session_id: str, product_id: str, quantity: int, token: Optional[str] = None) -> Dict[str, Any]:
+    async def add_to_cart(self, session_id: str, product_id: str, quantity: int, token: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
         headers = {"X-Session-Id": session_id}
         if token:
             headers["Authorization"] = f"Bearer {token}"
+        if user_id:
+            headers["X-User-Id"] = user_id
         payload = {"product_id": product_id, "quantity": quantity}
         return await self._request("POST", "/cart/items", json=payload, headers=headers)

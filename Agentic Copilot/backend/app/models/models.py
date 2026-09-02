@@ -94,18 +94,27 @@ class IntentAgentJob(Base, TimestampMixin):
     
     session = relationship("CustomerSession")
 
-class AgentExecution(Base, TimestampMixin):
-    __tablename__ = "agent_executions"
+class ExecutionTrace(Base, TimestampMixin):
+    __tablename__ = "execution_traces"
     
     id = Column(String, primary_key=True, index=True)
-    session_id = Column(String, nullable=False, index=True)
-    trace_id = Column(String, nullable=True)
-    agent_id = Column(String, nullable=False) # e.g. IntentAgent
-    input_summary = Column(String, nullable=True)
-    output_summary = Column(String, nullable=True)
-    latency_ms = Column(Float, nullable=True)
-    status = Column(String, nullable=False) # SUCCESS, ERROR
-    error_message = Column(String, nullable=True)
+    session_id = Column(String, ForeignKey("customer_sessions.session_id"), nullable=False, index=True)
+    request_id = Column(String, nullable=True, index=True)
+    component_id = Column(String, nullable=False, index=True) # e.g. n_product_intelligence
+    component_type = Column(String, nullable=False) # e.g. agent, engine
+    status = Column(String, nullable=False) # RUNNING, SUCCESS, FAILED
+    
+    start_time = Column(Float, nullable=False)
+    end_time = Column(Float, nullable=True)
+    duration_ms = Column(Float, nullable=True)
+    
+    inputs = Column(JSON, default={})
+    outputs = Column(JSON, default={})
+    events = Column(JSON, default=[]) # Array of {timestamp, event, description}
+    tool_calls = Column(JSON, default=[]) # Array of {tool_name, function, args, start, end, duration, status, result, error}
+    error_details = Column(JSON, nullable=True) # {error_type, message, stack_trace}
+    
+    session = relationship("CustomerSession")
 
 class Conversation(Base, TimestampMixin):
     __tablename__ = "conversations"

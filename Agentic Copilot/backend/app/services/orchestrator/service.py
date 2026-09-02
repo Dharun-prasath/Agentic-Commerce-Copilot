@@ -73,7 +73,7 @@ class OrchestratorService:
             intent_agent = IntentAgent()
             start_llm = time.time()
             
-            output = await intent_agent.analyze_intent_structured(structured_input)
+            output = await intent_agent.analyze_intent_structured(structured_input, session_id)
             latency_ms = (time.time() - start_llm) * 1000
             logger.info(f"Orchestrator: Intent Agent completed for {session_id} in {latency_ms:.2f}ms")
             
@@ -140,6 +140,7 @@ class OrchestratorService:
         """
         Triggers Product Intelligence Agent in the background.
         """
+        from app.core.telemetry import trace
         try:
             async with async_session_maker() as db:
                 res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.id == job_id))
@@ -151,8 +152,10 @@ class OrchestratorService:
             logger.info(f"Orchestrator triggering Product Intelligence for session {session_id}")
             pi_agent = ProductIntelligenceAgent()
             
-            # Run product intelligence (will be refactored to take structured requirement)
-            recommendations = await pi_agent.generate_recommendations(requirement)
+            # Run product intelligence
+            async with trace("n_orchestrator", "orchestrator", session_id) as t:
+                t.add_event("Calling Product Intelligence Agent")
+                recommendations = await pi_agent.generate_recommendations(requirement, session_id)
             
             return await self._handle_product_recommendations(job_id, session_id, recommendations)
             
@@ -207,18 +210,40 @@ class OrchestratorService:
                 products = recs_dict.get("recommendations", [])
                 summary = recs_dict.get("recommendation_summary") or recs_dict.get("comparison_summary", "Here are some recommendations for you!")
                 
-                # Use module-level _bg_tasks
-                global _bg_tasks
-                task = asyncio.create_task(telegram.send_recommendation_summary(chat_id, summary, products))
-                _bg_tasks.add(task)
-                task.add_done_callback(_bg_tasks.discard)
+                # Run telegram sends in background so we don't block
+                import asyncio
+                async def send_to_telegram(chat_id, summary, products, session_id):
+                    from app.core.telemetry import trace
+                    import time
+                    
+                    async with trace("n_telegram", "engine", session_id) as t:
+                        t.set_input({
+                            "chat_id": chat_id,
+                            "summary": summary,
+                            "products_count": len(products),
+                            "products": products
+                        })
+                        t.add_event(f"Sending {len(products)} products to Telegram")
+                        
+                        start_time = time.time()
+                        await telegram.send_recommendation_summary(chat_id, summary, products)
+                        
+                        for p in products:
+                            t.add_event(f"Sending card for {p.get('product_name')}")
+                            await telegram.send_product_card(chat_id, p)
+                            
+                        end_time = time.time()
+                        t.add_tool_call("telegram", "send_messages", f"Sent summary + {len(products)} cards", start_time, end_time, "SUCCESS")
+                        t.set_output({"status": "Sent successfully"})
+                        
+                asyncio.create_task(send_to_telegram(chat_id, recs_dict.get("recommendation_summary", ""), products, session_id))
                 logger.info(f"Orchestrator successfully routed recommendations to Telegram asynchronously for {session_id}")
             else:
                 logger.info(f"No Telegram chat ID found for session {session_id}. Recommendations generated but not sent.")
 
             # We dispatch the result asynchronously to the voice agent via event queue
             from app.integrations.voice.events import push_voice_event
-            push_voice_event(session_id, "PRODUCT_RECOMMENDATIONS_READY", recs_dict)
+            await push_voice_event(session_id, "PRODUCT_RECOMMENDATIONS_READY", recs_dict)
             return recs_dict
 
         except Exception as e:
@@ -287,15 +312,23 @@ class OrchestratorService:
         """
         Triggered by Sales Consultant when enough info is gathered.
         """
+        job_id = None
         async with async_session_maker() as db:
             res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.session_id == session_id))
             job = res.scalar_one_or_none()
             if not job:
-                logger.error(f"Cannot find job for session {session_id} to request PI.")
-                return {"status": "error"}
-            job.status = "PRODUCT_RECOMMENDATION_REQUESTED"
+                logger.warning(f"No job found for session {session_id}. Creating an ad-hoc OrchestratorJob for voice session.")
+                job_id = str(uuid.uuid4())
+                job = OrchestratorJob(
+                    id=job_id,
+                    session_id=session_id,
+                    status="PRODUCT_RECOMMENDATION_REQUESTED"
+                )
+                db.add(job)
+            else:
+                job.status = "PRODUCT_RECOMMENDATION_REQUESTED"
+                job_id = str(job.id)
             await db.commit()
-            job_id = job.id
             
         return await self._trigger_product_intelligence(job_id, session_id, requirements)
 

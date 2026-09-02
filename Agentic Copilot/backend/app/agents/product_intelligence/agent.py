@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
@@ -59,64 +59,167 @@ class ProductIntelligenceOutput(BaseModel):
     recommendation_summary: str = Field(description="A friendly summary paragraph to send to the customer")
 
 
+class LightweightProductRecommendation(BaseModel):
+    product_id: str = Field(description="The unique identifier (UUID) of the product")
+    match_score: Optional[float] = Field(default=0.8, description="A score from 0.0 to 1.0 indicating how well this matches the customer requirement")
+    match_reason: Optional[str] = Field(default="", description="A short explanation of why this product is recommended")
+    key_features: Optional[List[str]] = Field(default=[], description="List of 3-5 specific key specs/features pulled from the product specs")
+
+class LightweightProductIntelligenceOutput(BaseModel):
+    recommendations: List[LightweightProductRecommendation] = Field(default=[], description="List of recommended products")
+    comparison_summary: Optional[str] = Field(default="", description="A summary comparing the top recommended products")
+    recommendation_summary: Optional[str] = Field(default="", description="A friendly summary paragraph to send to the customer")
+
+
 class ProductIntelligenceAgent:
     def __init__(self):
         model_name = settings.PRODUCT_AGENT_MODEL or settings.LLM_MODEL
         self.llm = get_llm(model_name=model_name)
         self.tools = [search_products, get_product_details]
         
-    async def generate_recommendations(self, mock_requirement: Dict[str, Any]) -> ProductIntelligenceOutput:
+    async def generate_recommendations(self, mock_requirement: Dict[str, Any], session_id: str) -> ProductIntelligenceOutput:
         """
         Takes a structured Mock Customer Requirement dict and returns structured Product Recommendations.
         """
         import time
-        config = await get_agent_config("product")
-        sys_prompt = config.get("system_prompt", PRODUCT_INTELLIGENCE_SYSTEM_PROMPT)
+        from app.core.telemetry import trace
         
-        live_llm = get_llm(
-            model_name=config.get("model_name", settings.PRODUCT_AGENT_MODEL or settings.LLM_MODEL),
-            temperature=config.get("temperature", 0.0),
-            top_p=config.get("top_p", 0.9),
-            top_k=config.get("top_k", 40),
-            max_output_tokens=config.get("max_output_tokens", 2048)
-        )
-        
-        # Structured output binding for final step
-        llm_with_structured = live_llm.with_structured_output(ProductIntelligenceOutput)
-        
-        # PRE-FETCH: Do the search in code to avoid 3-4 round trips of LLM tool calling (saves 5+ seconds)
-        query_parts = []
-        if mock_requirement.get("category"):
-            query_parts.append(str(mock_requirement["category"]))
-        if mock_requirement.get("brand"):
-            query_parts.append(str(mock_requirement["brand"]))
+        async with trace("n_product_intelligence", "agent", session_id) as t:
+            t.set_input(mock_requirement)
+            t.add_event("Starting product intelligence")
             
-        query = " ".join(query_parts) if query_parts else "popular"
-        
-        try:
-            search_results = await demo_client.search_products_autocomplete(query)
-            products_json = json.dumps(search_results.get("products", []), indent=2)
-        except Exception as e:
-            logger.error(f"PI Agent pre-search failed: {e}")
-            products_json = "[]"
-        
-        messages = [
-            SystemMessage(content=sys_prompt),
-            HumanMessage(content=f"Please analyze these customer requirements:\n{json.dumps(mock_requirement, indent=2)}\n\nHere are the products retrieved from the catalog:\n{products_json}\n\nAct as the Product Intelligence Agent and output the structured JSON recommendations.")
-        ]
-        
-        try:
-            # SINGLE PASS: Directly output structured JSON
-            start_time = time.time()
-            structured_response = await llm_with_structured.ainvoke(messages)
-            logger.info(f"PI Agent finished in {time.time() - start_time:.2f} seconds")
-            return structured_response
+            config = await get_agent_config("product")
+            sys_prompt = config.get("system_prompt", PRODUCT_INTELLIGENCE_SYSTEM_PROMPT)
             
-        except Exception as e:
-            logger.error(f"Error in Product Intelligence Agent generating recommendations: {str(e)}")
-            # Return empty structured result as fallback
-            return ProductIntelligenceOutput(
-                recommendations=[],
-                comparison_summary="An error occurred while fetching products.",
-                recommendation_summary="Sorry, I couldn't find any recommendations at this moment."
+            live_llm = get_llm(
+                model_name=config.get("model_name", settings.PRODUCT_AGENT_MODEL or settings.LLM_MODEL),
+                temperature=config.get("temperature", 0.0),
+                top_p=config.get("top_p", 0.9),
+                top_k=config.get("top_k", 40),
+                max_output_tokens=config.get("max_output_tokens", 1024)
             )
+            
+            # Use lightweight schema to drastically reduce LLM generation time (ultrafast)
+            llm_with_structured = live_llm.with_structured_output(LightweightProductIntelligenceOutput)
+            
+            # PRE-FETCH: Do the search in code to avoid 3-4 round trips of LLM tool calling
+            query_params = {}
+            if mock_requirement.get("category"):
+                cat_input = str(mock_requirement["category"]).lower()
+                if "laptop" in cat_input:
+                    query_params["category"] = "laptops"
+                elif "accessor" in cat_input:
+                    query_params["category"] = "accessories"
+                else:
+                    query_params["search"] = cat_input
+                    
+            if mock_requirement.get("brand"):
+                query_params["brand"] = str(mock_requirement["brand"])
+                
+            if mock_requirement.get("budget_max"):
+                try:
+                    query_params["max_price"] = float(mock_requirement["budget_max"])
+                except (ValueError, TypeError):
+                    pass
+                    
+            query_params["page_size"] = 5 # Fetch top 5 candidates to make LLM generation ultrafast
+            
+            t.add_event(f"Querying catalog with params: {query_params}")
+            search_results = {}
+            try:
+                search_start = time.time()
+                search_results = await demo_client.get_products(query_params)
+                search_end = time.time()
+                t.add_tool_call("demo_client", "get_products", query_params, search_start, search_end, "SUCCESS", search_results)
+                
+                # Only give the LLM essential fields to read to save input tokens too!
+                minimal_products = []
+                for item in search_results.get("items", []):
+                    minimal_products.append({
+                        "id": item.get("id"),
+                        "name": item.get("name"),
+                        "price": item.get("price"),
+                        "brand": item.get("brand"),
+                        "description": item.get("description", "")[:200]
+                    })
+                products_json = json.dumps(minimal_products, indent=2)
+                t.add_event(f"Found {len(search_results.get('items', []))} candidate products")
+            except Exception as e:
+                logger.error(f"PI Agent pre-search failed: {e}")
+                products_json = "[]"
+                t.add_tool_call("demo_client", "get_products", query_params, time.time(), time.time(), "FAILED", error=str(e))
+                t.add_event("Catalog query failed")
+            
+            messages = [
+                SystemMessage(content=sys_prompt),
+                HumanMessage(content=f"Please analyze these customer requirements:\n{json.dumps(mock_requirement, indent=2)}\n\nHere are the products retrieved from the catalog:\n{products_json}\n\nAct as the Product Intelligence Agent and output the structured JSON recommendations.")
+            ]
+            
+            try:
+                # SINGLE PASS: Directly output structured JSON
+                t.add_event("Ranking and generating recommendations")
+                start_time = time.time()
+                structured_response = await llm_with_structured.ainvoke(messages)
+                end_time = time.time()
+                
+                response_dict = {}
+                if hasattr(structured_response, 'model_dump'):
+                    response_dict = structured_response.model_dump()
+                elif isinstance(structured_response, dict):
+                    response_dict = structured_response
+                
+                t.add_tool_call("llm", "ainvoke", "mock_requirement", start_time, end_time, "SUCCESS", response_dict)
+                
+                logger.info(f"PI Agent finished in {end_time - start_time:.2f} seconds")
+                t.add_event("Recommendations generated successfully")
+                
+                # EXACT DB DATA INJECTION: Overwrite LLM schema fields with actual DB fields
+                db_items_map = {str(item["id"]): item for item in search_results.get("items", [])}
+                
+                full_recommendations = []
+                # Post-process the response_dict into full ProductRecommendation models
+                for rec in response_dict.get("recommendations", []):
+                    prod_id = rec.get("product_id")
+                    if prod_id in db_items_map:
+                        db_item = db_items_map[prod_id]
+                        cat_name = db_item.get("category", {}).get("name", "") if isinstance(db_item.get("category"), dict) else ""
+                        
+                        full_rec = ProductRecommendation(
+                            product_id=prod_id,
+                            product_name=db_item.get("name", ""),
+                            product_slug=db_item.get("slug", ""),
+                            brand=db_item.get("brand", ""),
+                            product_url=f"/products/{db_item.get('slug', '')}",
+                            image_url=db_item.get("thumbnail", "") or "",
+                            price=float(db_item.get("price") or 0.0),
+                            original_price=float(db_item.get("original_price") or 0.0),
+                            rating=float(db_item.get("rating") or 0.0),
+                            review_count=int(db_item.get("review_count") or 0),
+                            match_score=rec.get("match_score", 0.0),
+                            match_reason=rec.get("match_reason", ""),
+                            key_features=rec.get("key_features", []),
+                            category=cat_name
+                        )
+                        full_recommendations.append(full_rec)
+                            
+                final_output = ProductIntelligenceOutput(
+                    schema_version="1.0",
+                    recommendations=full_recommendations,
+                    comparison_summary=response_dict.get("comparison_summary", ""),
+                    recommendation_summary=response_dict.get("recommendation_summary", "")
+                )
+                
+                t.set_output(final_output.model_dump())
+                return final_output
+                
+            except Exception as e:
+                logger.error(f"Error in Product Intelligence Agent generating recommendations: {str(e)}")
+                t.set_error(e)
+                # Return empty structured result as fallback
+                fallback = ProductIntelligenceOutput(
+                    recommendations=[],
+                    comparison_summary="An error occurred while fetching products.",
+                    recommendation_summary="Sorry, I couldn't find any recommendations at this moment."
+                )
+                t.set_output(fallback.model_dump())
+                return fallback
