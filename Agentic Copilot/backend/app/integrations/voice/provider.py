@@ -171,9 +171,22 @@ class GeminiNativeAudioProvider(VoiceProvider):
                                                 result_data = {"status": "processing", "message": "Product selection confirmed. Commerce engine is adding to cart. Wait for the COMMERCE_RESULT system update before ending the call."}
                                                 
                                             elif name == "end_conversation":
+                                                reason = args.get("reason", "CUSTOMER_NOT_INTERESTED")
                                                 if session_id:
-                                                    await orchestrator.handle_customer_not_interested(session_id)
+                                                    if reason == "ADDED_TO_CART":
+                                                        await orchestrator.handle_product_added_to_cart(session_id)
+                                                    else:
+                                                        await orchestrator.handle_customer_not_interested(session_id)
                                                 result_data = {"status": "success", "message": "Conversation ended successfully."}
+                                                
+                                                # Schedule delayed connection drop to allow goodbye audio to stream
+                                                async def delayed_close():
+                                                    await asyncio.sleep(4)
+                                                    try:
+                                                        await websocket.close()
+                                                    except:
+                                                        pass
+                                                asyncio.create_task(delayed_close())
                                             
                                             else:
                                                 result_data = {"status": "error", "message": f"Unknown tool {name}"}
@@ -233,7 +246,7 @@ class GeminiNativeAudioProvider(VoiceProvider):
                                 )
                                 
                             elif event_type == "COMMERCE_RESULT":
-                                message = f"SYSTEM UPDATE: The commerce action returned: {json.dumps(data)}. If successful, confirm to the user and naturally close the conversation."
+                                message = f"SYSTEM UPDATE: The commerce action returned: {json.dumps(data)}. If successful, IMMEDIATELY say a polite goodbye and call end_conversation with reason ADDED_TO_CART."
                                 await session.send(
                                     input=message,
                                     end_of_turn=True

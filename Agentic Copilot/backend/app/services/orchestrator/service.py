@@ -359,6 +359,18 @@ class OrchestratorService:
         from app.integrations.voice.events import push_voice_event
         await push_voice_event(session_id, "COMMERCE_RESULT", result)
 
+    async def handle_product_added_to_cart(self, session_id: str):
+        """
+        Triggered when the agent successfully adds the product to cart and ends call.
+        """
+        logger.info(f"Product added to cart. Updating workflow status for session {session_id}.")
+        async with async_session_maker() as db:
+            res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.session_id == session_id))
+            job = res.scalar_one_or_none()
+            if job:
+                job.status = "ADDED_TO_CART"
+                await db.commit()
+
     async def handle_customer_not_interested(self, session_id: str):
         """
         Triggered by Sales Consultant when customer rejects/ends call.
