@@ -11,7 +11,7 @@ export default function Footer() {
               <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-blue-700 flex items-center justify-center">
                 <Zap className="w-4 h-4 text-slate-900" />
               </div>
-              <span className="font-bold text-slate-900 text-lg">Dex<span className="gradient-text">tro</span></span>
+              <span className="font-bold text-slate-900 text-lg">Demo <span className="gradient-text">Commerce</span></span>
             </Link>
             <p className="text-slate-600 text-sm leading-relaxed max-w-sm">
               Premium laptops and laptop accessories. The merchant application for Agentic Commerce Copilot —
@@ -42,7 +42,7 @@ export default function Footer() {
           </div>
         </div>
         <div className="mt-8 pt-8 border-t border-slate-200 flex items-center justify-between">
-          <p className="text-slate-500 text-xs">© 2026 Dextro - All Copyright Reserved</p>
+          <p className="text-slate-500 text-xs">© 2026 Demo Commerce - All Copyright Reserved</p>
           <p className="text-slate-500 text-xs">Built for Razorpay Buildathon 2026</p>
         </div>
       </div>

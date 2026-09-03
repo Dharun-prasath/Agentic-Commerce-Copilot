@@ -131,9 +131,9 @@ export default function Navbar() {
         <div className="flex items-center justify-between h-16 gap-4">
           {/* Logo */}
           <Link to="/" className="flex items-center gap-2 shrink-0">
-            <img src="/brand.png" alt="Dextro Logo" className="w-10 h-10 object-contain" />
+            <img src="/brand.png" alt="Demo Commerce Logo" className="w-10 h-10 object-contain" />
             <span className="font-bold text-slate-900 text-lg hidden sm:block">
-              Dex<span className="gradient-text">tro</span>
+              Demo <span className="gradient-text">Commerce</span>
             </span>
           </Link>
 

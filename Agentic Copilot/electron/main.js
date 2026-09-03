@@ -16,6 +16,8 @@ function createWindow() {
     frame: false,
     show: false,
     alwaysOnTop: true,
+    type: 'panel',
+    hasShadow: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -25,6 +27,7 @@ function createWindow() {
 
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+  mainWindow.setHiddenInMissionControl(true);
 
   mainWindow.loadURL('http://localhost:5180');
 }

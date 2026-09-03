@@ -113,7 +113,7 @@ export default function CheckoutPage() {
         key: paymentOrder.key_id,
         amount: paymentOrder.amount_in_paise,
         currency: paymentOrder.currency,
-        name: 'Dextro',
+        name: 'Demo Commerce',
         description: `Order for ${calculation.items.length} item(s)`,
         order_id: paymentOrder.razorpay_order_id,
         prefill: paymentOrder.prefill,

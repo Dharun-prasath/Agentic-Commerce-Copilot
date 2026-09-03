@@ -269,9 +269,8 @@ function App() {
       {/* Status Bar Spacer for iPhone */}
       <div className="h-14 w-full"></div>
 
-      {/* Caller Info */}
       <div className="flex flex-col items-center flex-1 pt-8">
-        <h1 className="text-3xl font-normal tracking-wide text-white/90">Agentic Commerce</h1>
+        <h1 className="text-3xl font-normal tracking-wide text-white/90">Agentic Copilot</h1>
 
         {callState === 'INCOMING' && (
           <p className="mt-2 text-white/60 text-lg">Sales Consultant</p>

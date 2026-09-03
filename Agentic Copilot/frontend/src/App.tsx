@@ -7,6 +7,7 @@ import { Customer360 } from './components/Customer360';
 import { AgentsConfigView } from './components/AgentsConfigView';
 import { ApiConfigView } from './components/ApiConfigView';
 import { AgenticActionsView } from './components/agentic_actions/AgenticActionsView';
+import { CallsView } from './components/CallsView';
 
 const API_BASE_URL = 'http://localhost:8000/api/v1';
 
@@ -142,7 +143,7 @@ function App() {
                       
                       <div className="border-t border-gray-100">
                         {agentConfigs.length > 0 ? (
-                          agentConfigs.map((cfg) => {
+                          agentConfigs.filter(cfg => cfg.agent_id !== 'commerce').map((cfg) => {
                             const metaMap: Record<string, string> = {
                               intent: 'Intent Agent',
                               sales: 'Sales Consultant',
@@ -208,9 +209,7 @@ function App() {
               ) : activeTab === 'commerce' ? (
                 <AgenticActionsView />
               ) : activeTab === 'calls' ? (
-                <div className="p-12 text-center text-gray-500">
-                  <h2 className="text-xl font-bold">Calls view merged into Agentic Actions</h2>
-                </div>
+                <CallsView />
               ) : (
                 <div className="p-12 text-center text-gray-500 text-lg">
                   <h2 className="text-2xl font-bold text-gray-900 mb-2">Coming Soon</h2>

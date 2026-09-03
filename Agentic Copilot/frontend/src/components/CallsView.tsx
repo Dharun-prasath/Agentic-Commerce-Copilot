@@ -28,14 +28,7 @@ export function CallsView() {
     return () => clearInterval(interval);
   }, []);
 
-  const getStatusColor = (status: string) => {
-    if (status.includes("TRIGGERED")) return "text-blue-600 bg-blue-50 border-blue-200";
-    if (status.includes("READY") || status.includes("REQUESTED")) return "text-green-600 bg-green-50 border-green-200";
-    if (status.includes("COMPLETED")) return "text-emerald-700 bg-emerald-50 border-emerald-200";
-    if (status.includes("FAILED") || status.includes("ERROR")) return "text-red-600 bg-red-50 border-red-200";
-    if (status.includes("INTERESTED")) return "text-gray-600 bg-gray-50 border-gray-200";
-    return "text-purple-600 bg-purple-50 border-purple-200";
-  };
+
 
   return (
     <>
@@ -71,11 +64,11 @@ export function CallsView() {
                   <td className="px-6 py-4 font-bold text-gray-900">{call.user}</td>
                   <td className="px-6 py-4 font-mono text-gray-500">{call.session_id.substring(0, 8)}</td>
                   <td className="px-6 py-4">
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getStatusColor(call.status)}`}>
+                    <span className="font-medium text-gray-700">
                       {call.status}
                     </span>
                     {call.error && (
-                      <div className="mt-1 text-xs text-red-500 max-w-xs truncate">{call.error}</div>
+                      <div className="mt-1 text-xs text-gray-500 max-w-xs truncate">{call.error}</div>
                     )}
                   </td>
                   <td className="px-6 py-4 text-gray-500">{call.time}</td>

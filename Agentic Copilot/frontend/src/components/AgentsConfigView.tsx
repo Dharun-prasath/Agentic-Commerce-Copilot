@@ -23,7 +23,6 @@ const AGENT_META = {
   intent: { name: 'Intent Agent', desc: 'Analyzes user messages to determine buying intent.' },
   sales: { name: 'Sales Consultant', desc: 'Engages in conversational sales and handles objections.' },
   product: { name: 'Product Intelligence', desc: 'Expert on product catalog, features, and comparisons.' },
-  commerce: { name: 'Commerce Agent', desc: 'Executes transactions, applies discounts, modifies cart.' },
 };
 
 export const AgentsConfigView: React.FC = () => {
@@ -93,7 +92,7 @@ export const AgentsConfigView: React.FC = () => {
           <p className="text-[13px] text-gray-500 mt-1">Configure live agent behavior</p>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {['intent', 'sales', 'product', 'commerce'].map((id) => {
+          {['intent', 'sales', 'product'].map((id) => {
             const meta = AGENT_META[id as keyof typeof AGENT_META];
             const isActive = selectedAgentId === id;
             return (

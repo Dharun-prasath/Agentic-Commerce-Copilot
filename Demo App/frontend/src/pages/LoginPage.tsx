@@ -57,10 +57,10 @@ export default function LoginPage() {
       <div className="max-w-md w-full relative">
         <div className="text-center mb-8">
           <Link to="/" className="inline-flex items-center justify-center mb-6">
-            <img src="/brand.png" alt="Dextro" className="h-16 w-auto object-contain" />
+            <img src="/brand.png" alt="Demo Commerce" className="h-16 w-auto object-contain" />
           </Link>
           <h2 className="text-3xl font-bold text-slate-900 mb-2">Welcome back</h2>
-          <p className="text-slate-600">Sign in to your Dextro account</p>
+          <p className="text-slate-600">Sign in to your Demo Commerce account</p>
         </div>
 
         <div className="glass-card p-8">
