@@ -226,24 +226,25 @@ class OrchestratorService:
                         t.add_event(f"Sending {len(products)} products to Telegram")
                         
                         start_time = time.time()
+                        # send_recommendation_summary already sends the individual product cards in parallel!
                         await telegram.send_recommendation_summary(chat_id, summary, products)
-                        
-                        for p in products:
-                            t.add_event(f"Sending card for {p.get('product_name')}")
-                            await telegram.send_product_card(chat_id, p)
                             
                         end_time = time.time()
                         t.add_tool_call("telegram", "send_messages", f"Sent summary + {len(products)} cards", start_time, end_time, "SUCCESS")
                         t.set_output({"status": "Sent successfully"})
                         
-                asyncio.create_task(send_to_telegram(chat_id, recs_dict.get("recommendation_summary", ""), products, session_id))
+                # Keep a reference to prevent garbage collection
+                if not hasattr(self, '_bg_tasks'):
+                    self._bg_tasks = set()
+                task = asyncio.create_task(send_to_telegram(chat_id, recs_dict.get("recommendation_summary", ""), products, session_id))
+                self._bg_tasks.add(task)
+                task.add_done_callback(self._bg_tasks.discard)
+                
                 logger.info(f"Orchestrator successfully routed recommendations to Telegram asynchronously for {session_id}")
             else:
                 logger.info(f"No Telegram chat ID found for session {session_id}. Recommendations generated but not sent.")
 
-            # We dispatch the result asynchronously to the voice agent via event queue
-            from app.integrations.voice.events import push_voice_event
-            await push_voice_event(session_id, "PRODUCT_RECOMMENDATIONS_READY", recs_dict)
+            # Removed async push_voice_event since it is now returned synchronously to the Voice Agent
             return recs_dict
 
         except Exception as e:

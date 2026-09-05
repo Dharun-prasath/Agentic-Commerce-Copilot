@@ -6,15 +6,22 @@ import logging
 import asyncio
 from google import genai
 from google.genai import types
+import uuid
+import json
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+if not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
+    fh = logging.FileHandler('/tmp/voice_debug.log')
+    fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logger.addHandler(fh)
 
 # Keep strong references to background tasks to prevent garbage collection
 _bg_tasks = set()
 
 from sqlalchemy.future import select
-from app.core.database import get_db
-from app.models.models import CustomerSession
+from app.core.database import get_db, async_session_maker
+from app.models.models import CustomerSession, OrchestratorJob
 from sqlalchemy.orm import selectinload
 
 from app.agents.product_intelligence.agent import search_products, get_product_details
@@ -69,14 +76,7 @@ class GeminiNativeAudioProvider(VoiceProvider):
             config = types.LiveConnectConfig(
                 response_modalities=[types.Modality.AUDIO],
                 system_instruction=types.Content(parts=[types.Part.from_text(text=system_instruction_text)]),
-                tools=[tool_declarations],
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name="Puck"
-                        )
-                    )
-                )
+                tools=[tool_declarations]
             )
             
             # Setup Event Queue for pushing external Orchestrator events to Gemini
@@ -153,22 +153,59 @@ class GeminiNativeAudioProvider(VoiceProvider):
                                             result_data = {}
                                             if name == "request_product_recommendations":
                                                 if session_id:
-                                                    # Run PI asynchronously so voice is not blocked
-                                                    # Keep a strong reference to prevent GC from killing the task
-                                                    task = asyncio.create_task(orchestrator.handle_product_recommendation_requested(session_id, args))
-                                                    _bg_tasks.add(task)
-                                                    task.add_done_callback(_bg_tasks.discard)
-                                                    result_data = {"status": "processing", "message": "Query sent to Product Intelligence. It will notify you when ready. Tell the customer you are checking."}
+                                                    logger.info("Executing Product Intelligence synchronously...")
+                                                    recs_dict = await orchestrator.handle_product_recommendation_requested(session_id, args)
+                                                    recs = recs_dict.get("recommendations", [])
+                                                    simplified_recs = []
+                                                    for r in recs:
+                                                        simplified_recs.append({
+                                                            "product_id": r.get("product_id"),
+                                                            "name": r.get("product_name"),
+                                                            "price": f"₹{r.get('price', 0)}",
+                                                            "why_it_matches": r.get("match_reason")
+                                                        })
+                                                    result_data = {
+                                                        "status": "success", 
+                                                        "recommendations": simplified_recs,
+                                                        "system_directive": "CRITICAL: You must now SPEAK and explain 1 or 2 of these options to the customer conversationally. Do not just wait."
+                                                    }
                                                 else:
                                                     result_data = {"status": "error", "message": "No session ID"}
                                             
                                             elif name == "confirm_product_selection":
                                                 product_id = args.get("product_id")
                                                 if session_id and product_id is not None:
-                                                    task = asyncio.create_task(orchestrator.handle_product_confirmed(session_id, str(product_id)))
-                                                    _bg_tasks.add(task)
-                                                    task.add_done_callback(_bg_tasks.discard)
-                                                result_data = {"status": "processing", "message": "Product selection confirmed. Commerce engine is adding to cart. Wait for the COMMERCE_RESULT system update before ending the call."}
+                                                    logger.info("Executing Commerce Engine Add to Cart synchronously...")
+                                                    async with async_session_maker() as db:
+                                                        res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.session_id == session_id))
+                                                        job = res.scalar_one_or_none()
+                                                        if job:
+                                                            job.status = "COMMERCE_PROCESSING"
+                                                            await db.commit()
+                                                            
+                                                    commerce_res = await orchestrator.process_commerce_action(session_id, "ADD_TO_CART", {"product_id": product_id, "quantity": 1})
+                                                    
+                                                    async with async_session_maker() as db:
+                                                        res = await db.execute(select(OrchestratorJob).where(OrchestratorJob.session_id == session_id))
+                                                        job = res.scalar_one_or_none()
+                                                        if job:
+                                                            job.status = "COMMERCE_COMPLETED"
+                                                            await db.commit()
+                                                            
+                                                    if commerce_res.get("success") is False:
+                                                        result_data = {
+                                                            "status": "error",
+                                                            "message": commerce_res.get("error", {}).get("message", "Failed to add to cart."),
+                                                            "details": commerce_res,
+                                                            "system_directive": "CRITICAL: The product ID you used was invalid or not found. You MUST apologize to the customer and ask them to choose again. Do NOT call end_conversation."
+                                                        }
+                                                    else:
+                                                        result_data = {
+                                                            "status": "success", 
+                                                            "message": "Product added to cart successfully.", 
+                                                            "details": commerce_res,
+                                                            "system_directive": "CRITICAL: The item is now in the cart. You MUST immediately speak a polite goodbye, and then immediately call the end_conversation tool."
+                                                        }
                                                 
                                             elif name == "end_conversation":
                                                 reason = args.get("reason", "CUSTOMER_NOT_INTERESTED")
@@ -209,6 +246,12 @@ class GeminiNativeAudioProvider(VoiceProvider):
                                             )
                                     
                                     await session.send(input=types.LiveClientToolResponse(function_responses=function_responses))
+                                    
+                                    # Force the model to speak by sending the system directive as a direct prompt
+                                    for fr in function_responses:
+                                        if isinstance(fr.response, dict) and "system_directive" in fr.response:
+                                            await session.send(input=f"SYSTEM: {fr.response['system_directive']}", end_of_turn=True)
+                                            break
 
                         except Exception as e:
                             err_str = str(e)

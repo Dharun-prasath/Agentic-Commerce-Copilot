@@ -119,25 +119,15 @@ function App() {
 
           if (hasAudio) {
             silenceFrames = 0;
-            // User interrupted/started speaking. Clear the playback queue!
-            // DISABLED: To ensure clear conversation without accidental voice interruptions
-            /*
-            if (scheduledSources.length > 0) {
-              scheduledSources.forEach(src => {
-                try { src.stop(); } catch (e) {}
-              });
-              scheduledSources.length = 0; // clear array
-              if (audioCtx) {
-                 nextPlayTime = audioCtx.currentTime;
-              }
-            }
-            */
+
           } else {
             silenceFrames++;
           }
 
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(pcm16.buffer)
+            if (hasAudio || silenceFrames < 30) {
+              ws.send(pcm16.buffer)
+            }
           }
         }
 

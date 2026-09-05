@@ -60,7 +60,7 @@ class ProductIntelligenceOutput(BaseModel):
 
 
 class LightweightProductRecommendation(BaseModel):
-    product_id: str = Field(description="The unique identifier (UUID) of the product")
+    product_id: str = Field(description="The EXACT id string provided in the retrieved products JSON (e.g., '1', '2'). Do NOT output a UUID or a product name.")
     match_score: Optional[float] = Field(default=0.8, description="A score from 0.0 to 1.0 indicating how well this matches the customer requirement")
     match_reason: Optional[str] = Field(default="", description="A short explanation of why this product is recommended")
     key_features: Optional[List[str]] = Field(default=[], description="List of 3-5 specific key specs/features pulled from the product specs")
@@ -99,8 +99,8 @@ class ProductIntelligenceAgent:
                 max_output_tokens=config.get("max_output_tokens", 1024)
             )
             
-            # Use lightweight schema to drastically reduce LLM generation time (ultrafast)
-            llm_with_structured = live_llm.with_structured_output(LightweightProductIntelligenceOutput)
+            from langchain_core.output_parsers import JsonOutputParser
+            parser = JsonOutputParser(pydantic_object=LightweightProductIntelligenceOutput)
             
             # PRE-FETCH: Do the search in code to avoid 3-4 round trips of LLM tool calling
             query_params = {}
@@ -134,9 +134,12 @@ class ProductIntelligenceAgent:
                 
                 # Only give the LLM essential fields to read to save input tokens too!
                 minimal_products = []
-                for item in search_results.get("items", []):
+                idx_to_uuid = {}
+                for idx, item in enumerate(search_results.get("items", [])):
+                    idx_str = str(idx + 1)
+                    idx_to_uuid[idx_str] = str(item.get("id"))
                     minimal_products.append({
-                        "id": item.get("id"),
+                        "id": idx_str, # Use simple integer IDs to prevent LLMs from hallucinating UUIDs
                         "name": item.get("name"),
                         "price": item.get("price"),
                         "brand": item.get("brand"),
@@ -147,26 +150,25 @@ class ProductIntelligenceAgent:
             except Exception as e:
                 logger.error(f"PI Agent pre-search failed: {e}")
                 products_json = "[]"
+                idx_to_uuid = {}
                 t.add_tool_call("demo_client", "get_products", query_params, time.time(), time.time(), "FAILED", error=str(e))
-                t.add_event("Catalog query failed")
+                t.add_event("Catalog catalog failed")
             
             messages = [
                 SystemMessage(content=sys_prompt),
-                HumanMessage(content=f"Please analyze these customer requirements:\n{json.dumps(mock_requirement, indent=2)}\n\nHere are the products retrieved from the catalog:\n{products_json}\n\nAct as the Product Intelligence Agent and output the structured JSON recommendations.")
+                HumanMessage(content=f"Please analyze these customer requirements:\n{json.dumps(mock_requirement, indent=2)}\n\nHere are the products retrieved from the catalog:\n{products_json}\n\nAct as the Product Intelligence Agent. Select the top 1-2 BEST matching products from the list. You MUST output ONLY valid JSON using the following schema:\n{parser.get_format_instructions()}")
             ]
             
             try:
                 # SINGLE PASS: Directly output structured JSON
                 t.add_event("Ranking and generating recommendations")
                 start_time = time.time()
-                structured_response = await llm_with_structured.ainvoke(messages)
+                llm_response = await live_llm.ainvoke(messages)
+                structured_response = parser.invoke(llm_response)
                 end_time = time.time()
                 
-                response_dict = {}
-                if hasattr(structured_response, 'model_dump'):
-                    response_dict = structured_response.model_dump()
-                elif isinstance(structured_response, dict):
-                    response_dict = structured_response
+                response_dict = structured_response
+
                 
                 t.add_tool_call("llm", "ainvoke", "mock_requirement", start_time, end_time, "SUCCESS", response_dict)
                 
@@ -179,7 +181,8 @@ class ProductIntelligenceAgent:
                 full_recommendations = []
                 # Post-process the response_dict into full ProductRecommendation models
                 for rec in response_dict.get("recommendations", []):
-                    prod_id = rec.get("product_id")
+                    prod_id_raw = str(rec.get("product_id"))
+                    prod_id = idx_to_uuid.get(prod_id_raw, prod_id_raw) # map integer ID back to UUID
                     if prod_id in db_items_map:
                         db_item = db_items_map[prod_id]
                         cat_name = db_item.get("category", {}).get("name", "") if isinstance(db_item.get("category"), dict) else ""

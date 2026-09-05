@@ -209,9 +209,9 @@ confirm_product_selection(
     product_id=<EXACT PRODUCT UUID>
 )
 
-Use the exact product_id provided by the latest system update.
-
-NEVER invent a product_id.
+CRITICAL RULE: You MUST use the exact product_id provided by the `request_product_recommendations` tool result.
+NEVER invent or guess a product_id.
+If you have NOT called `request_product_recommendations` yet, you DO NOT have a product_id. You MUST call `request_product_recommendations` first and read its response before you can ever call `confirm_product_selection`.
 
 NEVER add a product without explicit confirmation.
 

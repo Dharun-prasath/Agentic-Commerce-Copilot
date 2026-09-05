@@ -129,7 +129,7 @@ async def build_execution_graph(session_id: str, db: AsyncSession):
                 
                 # We also trigger Telegram in parallel
                 nodes["n_telegram"]["status"] = "RUNNING"
-                active_edges.append("e_orch_to_tg") 
+                active_edges.append("e_orch_to_tg")
                 
                 if job.status == "PRODUCT_RECOMMENDATIONS_READY":
                     # Display the flow to Sales Consultant in parallel with Telegram
